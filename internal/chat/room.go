@@ -13,19 +13,34 @@ type Room struct {
 
 // NewRoom creates a room that keeps at most maxHistory messages.
 //
-// TODO(9): initialise BOTH maps with make() - writing to a nil map panics
-// (nil map rule). Give history a capacity of maxHistory.
+// Initialised BOTH maps with make() - writing to a nil map panics
+// (nil map rule). History has a capacity of maxHistory.
 func NewRoom(id RoomID, name string, maxHistory int) *Room {
-	return &Room{ID: id, Name: name, maxHistory: maxHistory}
+	return &Room{
+		ID:         id,
+		Name:       name,
+		Settings:   make(map[string]string),
+		members:    make(map[UserID]struct{}),
+		history:    make([]Message, 0, maxHistory),
+		maxHistory: maxHistory,
+	}
 }
 
-// TODO(10): add the user to members. Return ErrAlreadyExists if already there.
+// User added to members. ErrAlreadyExists returns if already there.
 func (r *Room) Join(id UserID) error {
+	if r.IsMember(id) {
+		return ErrAlreadyExists
+	}
+	r.members[id] = struct{}{}
 	return nil
 }
 
-// TODO(11): remove the user. Return ErrNotMember if they weren't a member.
+// Returns ErrNotMember if they weren't a member.
 func (r *Room) Leave(id UserID) error {
+	if !r.IsMember(id) {
+		return ErrNotMember
+	}
+	delete(r.members, id)
 	return nil
 }
 

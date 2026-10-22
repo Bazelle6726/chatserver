@@ -11,9 +11,7 @@ const (
 )
 
 // String makes Role satisfy fmt.Stringer, so fmt.Println(RoleAdmin) prints "admin".
-//
-// TODO(1): use a switch to return
-// "guest", "member", "admin", and "unknown" for anything else.
+
 func (r Role) String() string {
 	switch r {
 	case RoleGuest:
@@ -38,7 +36,6 @@ const (
 	KindSystem
 )
 
-// TODO(2): return "text", "join", "leave", "system", or "unspecified".
 func (k MessageKind) String() string {
 	switch k {
 	case KindUnspecified:
@@ -57,8 +54,7 @@ func (k MessageKind) String() string {
 }
 
 // CanModerate reports whether this role may delete messages or ban users.
-//
-// TODO(3): only admins can moderate.
+
 func (r Role) CanModerate() bool {
 	return r == RoleAdmin
 }

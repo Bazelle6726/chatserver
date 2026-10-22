@@ -35,7 +35,7 @@ type Message struct {
 
 // Promote turns a user into an admin.
 //
-// TODO(4): set the user's Role to RoleAdmin and return an Admin that
+// User's Role is set to RoleAdmin and return an Admin that
 // embeds the SAME *User (don't copy it). BannedWords can stay nil.
 func Promote(u *User) Admin {
 	u.Role = RoleAdmin
@@ -55,10 +55,10 @@ func (u *User) Rename(name string) error {
 }
 
 // IsBanned uses a value receiver because it only reads.
-// Because Admin embeds *User, admin.Rename(...) also works - method promotion.
+// Because Admin embeds *User, admin.Rename(...)
 //
-// TODO(6): return true if text contains any of a.BannedWords,
-// ignoring case. Hint: strings.Contains and strings.ToLower.
+// Returns true if text contains any of a.BannedWords,
+// ignoring case.
 func (a Admin) IsBanned(text string) bool {
 	text = strings.ToLower(text)
 	for _, word := range a.BannedWords {
