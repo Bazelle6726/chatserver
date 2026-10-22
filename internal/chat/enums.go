@@ -15,7 +15,17 @@ const (
 // TODO(1): use a switch to return
 // "guest", "member", "admin", and "unknown" for anything else.
 func (r Role) String() string {
-	return ""
+	switch r {
+	case RoleGuest:
+		return "guest"
+	case RoleMember:
+		return "member"
+	case RoleAdmin:
+		return "admin"
+	default:
+		return "unknown"
+	}
+
 }
 
 type MessageKind int
@@ -30,12 +40,25 @@ const (
 
 // TODO(2): return "text", "join", "leave", "system", or "unspecified".
 func (k MessageKind) String() string {
-	return ""
+	switch k {
+	case KindUnspecified:
+		return "unspecified"
+	case KindText:
+		return "text"
+	case KindJoin:
+		return "join"
+	case KindLeave:
+		return "leave"
+	case KindSystem:
+		return "system"
+	default:
+		return "unknown"
+	}
 }
 
 // CanModerate reports whether this role may delete messages or ban users.
 //
 // TODO(3): only admins can moderate.
 func (r Role) CanModerate() bool {
-	return false
+	return r == RoleAdmin
 }

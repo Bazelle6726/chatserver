@@ -1,6 +1,9 @@
 package chat
 
-import "time"
+import (
+	"strings"
+	"time"
+)
 
 // Meta is embedded by value into Message (struct embedding).
 // Its fields are "promoted": you can write msg.ID instead of msg.Meta.ID.
@@ -35,7 +38,8 @@ type Message struct {
 // TODO(4): set the user's Role to RoleAdmin and return an Admin that
 // embeds the SAME *User (don't copy it). BannedWords can stay nil.
 func Promote(u *User) Admin {
-	return Admin{}
+	u.Role = RoleAdmin
+	return Admin{User: u}
 }
 
 // Rename uses a pointer receiver because it modifies the user.
@@ -43,6 +47,10 @@ func Promote(u *User) Admin {
 // TODO(5): validate the new name with ValidateName first; on error return it
 // unchanged. Otherwise set u.Name and return nil.
 func (u *User) Rename(name string) error {
+	if err := ValidateName(name); err != nil {
+		return err
+	}
+	u.Name = name
 	return nil
 }
 
@@ -52,5 +60,11 @@ func (u *User) Rename(name string) error {
 // TODO(6): return true if text contains any of a.BannedWords,
 // ignoring case. Hint: strings.Contains and strings.ToLower.
 func (a Admin) IsBanned(text string) bool {
+	text = strings.ToLower(text)
+	for _, word := range a.BannedWords {
+		if strings.Contains(text, strings.ToLower(word)) {
+			return true
+		}
+	}
 	return false
 }
