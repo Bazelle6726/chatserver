@@ -1,5 +1,7 @@
 package chat
 
+import "maps"
+
 // Room holds members and a capped message history.
 // No locks yet - stage 3 adds a sync.RWMutex when goroutines arrive.
 type Room struct {
@@ -13,7 +15,7 @@ type Room struct {
 
 // NewRoom creates a room that keeps at most maxHistory messages.
 //
-// Initialised BOTH maps with make() - writing to a nil map panics
+// Initialized BOTH maps with make() - writing to a nil map panics
 // (nil map rule). History has a capacity of maxHistory.
 func NewRoom(id RoomID, name string, maxHistory int) *Room {
 	return &Room{
@@ -57,33 +59,43 @@ func (r *Room) MemberCount() int {
 
 // AddMessage appends a message to the history.
 //
-// TODO(12):
-//   - return ErrNotMember if msg.Author isn't in the room
-//   - if the history is already full (len == maxHistory), drop the OLDEST
-//     message first to make room
-//   - then append the new message
-//
-// Careful: r.history = r.history[1:] looks right, but each reslice loses a slot
-// at the front, so append keeps allocating new arrays (how append grows past capacity).
-// Shift the kept messages to the front with copy() and shorten the slice instead,
-// so the room reuses one backing array forever. A test checks the capacity.
+//   - ErrNotMember returns if msg.Author isn't in the room
+//   - if the history is already full (len == maxHistory), the OLDEST message drops
+//     first to make room
+//   - then the new message appends to the end of the slice (newest last)
 func (r *Room) AddMessage(msg Message) error {
+	if !r.IsMember(msg.Author) {
+		return ErrNotMember
+	}
+	if len(r.history) == r.maxHistory {
+		copy(r.history, r.history[1:])
+		r.history = r.history[:r.maxHistory-1]
+	}
+	r.history = append(r.history, msg)
 	return nil
 }
 
 // LastN returns up to n of the newest messages, oldest first.
 //
-// TODO(13): return a NEW slice (use make + copy), not a sub-slice of r.history.
+// A NEW slice is returned (use make + copy), not a sub-slice of r.history.
 // Otherwise the caller could modify the room's history through it, and it keeps
 // the whole backing array alive (slices share their underlying array).
 // If n <= 0 return an empty (non-nil) slice.
 func (r *Room) LastN(n int) []Message {
-	return nil
+	if n <= 0 {
+		return make([]Message, 0)
+	}
+	if n > len(r.history) {
+		n = len(r.history)
+	}
+	result := make([]Message, n)
+	copy(result, r.history[len(r.history)-n:])
+	return result
 }
 
 // SettingsCopy returns a copy of the settings so callers can't modify the room's map.
 //
-// TODO(14): use maps.Clone (a shallow copy).
+// maps.Clone returns a shallow copy
 func (r *Room) SettingsCopy() map[string]string {
-	return r.Settings
+	return maps.Clone(r.Settings)
 }

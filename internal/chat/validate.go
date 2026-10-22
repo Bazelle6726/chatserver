@@ -14,13 +14,11 @@ const (
 
 // ValidateName checks user and room names.
 //
-// TODO(7): return a *ValidationError with Field "name" when:
+// *ValidationError returns with Field "name" when:
 //   - the name is shorter than MinNameLen or longer than MaxNameLen
-//     (count characters, not bytes: use len([]rune(name)))
 //   - it contains anything other than letters, digits, '-' or '_'
-//     (hint: loop with for-range and use unicode.IsLetter / unicode.IsDigit)
 //
-// Return nil when the name is fine. Pick your own Reason text.
+// nil returns when the name is fine
 func ValidateName(name string) error {
 	if len([]rune(name)) < MinNameLen || len([]rune(name)) > MaxNameLen {
 		return &ValidationError{
@@ -41,7 +39,7 @@ func ValidateName(name string) error {
 
 // ValidateMessage checks message text.
 //
-// TODO(8): return a *ValidationError with Field "text" if the text is empty
+// *ValidationError returns with Field "text" if the text is empty
 // (after strings.TrimSpace) or longer than MaxMessageLen characters.
 func ValidateMessage(text string) error {
 	text = strings.TrimSpace(text)
