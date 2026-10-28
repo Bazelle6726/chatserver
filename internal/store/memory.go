@@ -55,13 +55,18 @@ func NewMemoryStore(opts ...Option) *MemoryStore {
 //     (wrap it with context: fmt.Errorf("user %q: %w", name, chat.ErrAlreadyExists))
 //   - otherwise the user is created with an ID from nextUserID, stores it, returns it
 func (s *MemoryStore) CreateUser(name string) (*chat.User, error) {
-	chat.ValidateName(name)
-	if _, exists := s.users[chat.UserID(name)]; exists {
-		return nil, chat.ErrAlreadyExists
+	if err := chat.ValidateName(name); err != nil {
+		return nil, err
+	}
+	for _, user := range s.users {
+		if user.Name == name {
+			return nil, chat.ErrAlreadyExists
+		}
 	}
 	user := &chat.User{
 		ID:   chat.UserID(s.nextUserID()),
 		Name: name,
+		Role: chat.RoleMember,
 	}
 	s.users[user.ID] = user
 	return user, nil
@@ -77,9 +82,13 @@ func (s *MemoryStore) GetUser(id chat.UserID) (*chat.User, error) {
 
 // Same rules as CreateUser, but for rooms. Use chat.NewRoom.
 func (s *MemoryStore) CreateRoom(name string, maxHistory int) (*chat.Room, error) {
-	chat.ValidateName(name)
-	if _, exists := s.rooms[chat.RoomID(name)]; exists {
-		return nil, chat.ErrAlreadyExists
+	if err := chat.ValidateName(name); err != nil {
+		return nil, err
+	}
+	for _, room := range s.rooms {
+		if room.Name == name {
+			return nil, fmt.Errorf("room %q: %w", name, chat.ErrAlreadyExists)
+		}
 	}
 	room := chat.NewRoom(chat.RoomID(s.nextRoomID()), name, maxHistory)
 	s.rooms[room.ID] = room
@@ -127,7 +136,10 @@ func (s *MemoryStore) PostMessage(roomID chat.RoomID, author chat.UserID, text s
 	if err != nil {
 		return chat.Message{}, err
 	}
-	chat.ValidateMessage(text)
+
+	if err := chat.ValidateMessage(text); err != nil {
+		return chat.Message{}, err
+	}
 	msg := chat.Message{
 		Room:   room.ID,
 		Author: user.ID,
@@ -135,6 +147,8 @@ func (s *MemoryStore) PostMessage(roomID chat.RoomID, author chat.UserID, text s
 		Kind:   chat.KindText,
 		Meta:   chat.Meta{ID: chat.MessageID(s.nextMsgID()), CreatedAt: s.now()},
 	}
-	room.AddMessage(msg)
+	if err := room.AddMessage(msg); err != nil {
+		return chat.Message{}, err
+	}
 	return msg, nil
 }
