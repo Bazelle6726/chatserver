@@ -1,9 +1,11 @@
 package store
 
 import (
-	"time"
-
 	"chatserver/internal/chat"
+	"fmt"
+	"slices"
+	"strings"
+	"time"
 )
 
 // MemoryStore keeps everything in maps. Not safe for concurrent use yet:
@@ -28,56 +30,111 @@ func WithClock(now func() time.Time) Option {
 
 // NewMemoryStore builds a store and applies the options in order.
 //
-// TODO(16): make both maps, create three ID generators with prefixes
-// "u", "r" and "m", set now to time.Now, then loop over opts and call each one
+// both maps are made with three ID generators with prefixes
+// "u", "r" and "m", set now to time.Now, then looped over opts and calls each one
 // with the store.
 func NewMemoryStore(opts ...Option) *MemoryStore {
-	return &MemoryStore{}
+	s := &MemoryStore{
+		users:      make(map[chat.UserID]*chat.User),
+		rooms:      make(map[chat.RoomID]*chat.Room),
+		nextUserID: NewIDGenerator("u"),
+		nextRoomID: NewIDGenerator("r"),
+		nextMsgID:  NewIDGenerator("m"),
+		now:        time.Now,
+	}
+	for _, opt := range opts {
+		opt(s)
+	}
+	return s
 }
 
 // CreateUser validates the name and stores a new RoleMember user.
 //
-// TODO(17):
-//   - validate with chat.ValidateName and return the error as-is
-//   - return chat.ErrAlreadyExists if another user already has this name
+//   - validated with chat.ValidateName and returns the error as-is
+//   - returns chat.ErrAlreadyExists if another user already has this name
 //     (wrap it with context: fmt.Errorf("user %q: %w", name, chat.ErrAlreadyExists))
-//   - otherwise create the user with an ID from nextUserID, store it, return it
+//   - otherwise the user is created with an ID from nextUserID, stores it, returns it
 func (s *MemoryStore) CreateUser(name string) (*chat.User, error) {
-	return nil, nil
+	chat.ValidateName(name)
+	if _, exists := s.users[chat.UserID(name)]; exists {
+		return nil, chat.ErrAlreadyExists
+	}
+	user := &chat.User{
+		ID:   chat.UserID(s.nextUserID()),
+		Name: name,
+	}
+	s.users[user.ID] = user
+	return user, nil
 }
 
-// TODO(18): return the user, or an error wrapping chat.ErrUserNotFound.
+// Returns the user, or an error wrapping chat.ErrUserNotFound.
 func (s *MemoryStore) GetUser(id chat.UserID) (*chat.User, error) {
-	return nil, nil
+	if user, exists := s.users[id]; exists {
+		return user, nil
+	}
+	return nil, fmt.Errorf("user %q: %w", id, chat.ErrUserNotFound)
 }
 
-// TODO(19): same rules as CreateUser, but for rooms. Use chat.NewRoom.
+// Same rules as CreateUser, but for rooms. Use chat.NewRoom.
 func (s *MemoryStore) CreateRoom(name string, maxHistory int) (*chat.Room, error) {
-	return nil, nil
+	chat.ValidateName(name)
+	if _, exists := s.rooms[chat.RoomID(name)]; exists {
+		return nil, chat.ErrAlreadyExists
+	}
+	room := chat.NewRoom(chat.RoomID(s.nextRoomID()), name, maxHistory)
+	s.rooms[room.ID] = room
+	return room, nil
 }
 
-// TODO(20): return the room, or an error wrapping chat.ErrRoomNotFound.
+// Returns the room, or an error wrapping chat.ErrRoomNotFound.
 func (s *MemoryStore) GetRoom(id chat.RoomID) (*chat.Room, error) {
-	return nil, nil
+	if room, exists := s.rooms[id]; exists {
+		return room, nil
+	}
+	return nil, fmt.Errorf("room %q: %w", id, chat.ErrRoomNotFound)
 }
 
 // ListRooms returns all rooms sorted by name.
 //
-// TODO(21): map iteration order is random, so collect the
-// rooms into a slice and sort it. Hint: slices.SortFunc with strings.Compare.
+// Map iteration order is random, so it collects the
+// rooms into a slice and sorts it.
 func (s *MemoryStore) ListRooms() []*chat.Room {
-	return nil
+	rooms := make([]*chat.Room, 0, len(s.rooms))
+	for _, room := range s.rooms {
+		rooms = append(rooms, room)
+	}
+	slices.SortFunc(rooms, func(a, b *chat.Room) int {
+		return strings.Compare(a.Name, b.Name)
+	})
+	return rooms
 }
 
 // PostMessage validates and adds a text message to a room.
 //
-// TODO(22): in this order -
-//   - look up the room (return its error)
-//   - look up the author (return its error)
-//   - validate the text with chat.ValidateMessage
-//   - build a chat.Message with Room, Author, Text, Kind chat.KindText and
+// In this order -
+//   - looks up the room (returns its error)
+//   - looks up the author (returns its error)
+//   - validates the text with chat.ValidateMessage
+//   - builds a chat.Message with Room, Author, Text, Kind chat.KindText and
 //     Meta{ID: next msg ID, CreatedAt: s.now()}
-//   - add it with room.AddMessage and return the message
+//   - adds it with room.AddMessage and return the message
 func (s *MemoryStore) PostMessage(roomID chat.RoomID, author chat.UserID, text string) (chat.Message, error) {
-	return chat.Message{}, nil
+	room, err := s.GetRoom(roomID)
+	if err != nil {
+		return chat.Message{}, err
+	}
+	user, err := s.GetUser(author)
+	if err != nil {
+		return chat.Message{}, err
+	}
+	chat.ValidateMessage(text)
+	msg := chat.Message{
+		Room:   room.ID,
+		Author: user.ID,
+		Text:   text,
+		Kind:   chat.KindText,
+		Meta:   chat.Meta{ID: chat.MessageID(s.nextMsgID()), CreatedAt: s.now()},
+	}
+	room.AddMessage(msg)
+	return msg, nil
 }

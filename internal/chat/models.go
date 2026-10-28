@@ -44,8 +44,7 @@ func Promote(u *User) Admin {
 
 // Rename uses a pointer receiver because it modifies the user.
 //
-// TODO(5): validate the new name with ValidateName first; on error return it
-// unchanged. Otherwise set u.Name and return nil.
+// The new name is validated with ValidateName first; on error it is returned
 func (u *User) Rename(name string) error {
 	if err := ValidateName(name); err != nil {
 		return err
