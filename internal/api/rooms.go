@@ -23,18 +23,12 @@ type createRoomReq struct {
 }
 
 // POST /rooms  (logged in)
-//
-// TODO(31):
-//   - bind the body like createUser does
-//   - if MaxHistory is 0 use defaultMaxHistory; if it's below 0 or above
-//     maxMaxHistory, writeError(c, invalid("max_history", "must be 1-1000"))
-//   - a.store.CreateRoom(...), then respond 201 with toRoomDTO
 func (a *API) createRoom(c *gin.Context) {
 	var req createRoomReq
 	if err := c.ShouldBindJSON(&req); err != nil {
 		writeError(c, invalid("body", err.Error()))
 		return
-	}
+	} //bind the body
 	if req.MaxHistory == 0 {
 		req.MaxHistory = defaultMaxHistory
 	}
