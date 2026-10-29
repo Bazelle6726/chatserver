@@ -33,14 +33,23 @@ func NewLimiter(perSec int, now func() time.Time) *Limiter {
 
 // Allow reports whether user id may make another request right now.
 //
-// TODO(25): a "fixed window" counter:
+// "fixed window" counter:
 //   - lock l.mu, and defer the unlock
 //   - look up the user's window; if there isn't one, OR its start is a
-//     second or more before l.now(), start a fresh window at l.now()
+//     second or more before l.now(), starts a fresh window at l.now()
 //   - add 1 to the count
 //   - return whether the count is still <= l.perSec
 //
 // Use l.now(), never time.Now() directly, or the tests can't control time.
 func (l *Limiter) Allow(id chat.UserID) bool {
-	return true
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	w := l.windows[id]
+	if w == nil || l.now().Sub(w.start) >= time.Second {
+		w = &window{start: l.now()}
+		l.windows[id] = w
+	}
+	w.count++
+	return w.count <= l.perSec
 }

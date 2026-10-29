@@ -42,11 +42,9 @@ func toRoomDTO(r *chat.Room) roomDTO {
 
 // toMessageDTO converts a domain message into its JSON shape.
 //
-// TODO(24): fill in every field, following toUserDTO above:
 //   - IDs are defined types (chat.MessageID, chat.RoomID, chat.UserID):
 //     convert them with string(...)
 //   - m.ID and m.CreatedAt come from the embedded Meta (promoted fields)
-//   - Kind should be the readable name: m.Kind.String()
 func toMessageDTO(m chat.Message) messageDTO {
 	return messageDTO{
 		ID:        string(m.ID),
