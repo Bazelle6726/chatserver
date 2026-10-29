@@ -30,19 +30,16 @@ func Auth(s store.Store) gin.HandlerFunc {
 
 // RateLimit stops a user who makes too many requests per second.
 // It must run AFTER Auth, because it needs to know who the user is.
-//
-// TODO(26): inside the returned function:
-//   - get the user with currentUser(c)
-//   - if !l.Allow(user.ID), stop with
-//     c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{"error": "slow down"})
-//     and return
-//   - otherwise c.Next()
-//
-// The lock lives inside Allow, so it's held for a moment, not for the whole
-// request. Holding a lock across c.Next() would make every user wait for the
-// slowest request.
 func RateLimit(l *Limiter) gin.HandlerFunc {
-	return func(c *gin.Context) {
+	return func(c *gin.Context) { // get the user
+		user := currentUser(c)
+		if !l.Allow(user.ID) {
+			c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{"error": "slow down"})
+			return
+		}
 		c.Next()
+		// The lock lives inside Allow, so it's held for a moment, not for the whole
+		// request. Holding a lock across c.Next() would make every user wait for the
+		// slowest request.
 	}
 }
