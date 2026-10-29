@@ -1,28 +1,35 @@
 package api
 
 import (
-	"net/http"
-
 	"chatserver/internal/chat"
+	"errors"
+	"net/http"
 )
 
 // statusFor turns a domain error into an HTTP status code.
 // This is the ONE place that knows how errors map to HTTP, so every
 // endpoint answers the same way.
 //
-// TODO(23): use a switch with errors.As / errors.Is (they also see through
+// Switch with errors.As / errors.Is (they also see through
 // errors wrapped with %w):
-//
-//	*chat.ValidationError          -> 400 http.StatusBadRequest
-//	chat.ErrUserNotFound,
-//	chat.ErrRoomNotFound           -> 404 http.StatusNotFound
-//	chat.ErrAlreadyExists          -> 409 http.StatusConflict
-//	chat.ErrNotMember              -> 403 http.StatusForbidden
-//	anything else                  -> 500 http.StatusInternalServerError
-//
-// You'll need to import "errors".
 func statusFor(err error) int {
-	return http.StatusInternalServerError
+	var ve *chat.ValidationError
+	switch {
+	case errors.As(err, &ve):
+		return http.StatusBadRequest
+	case errors.Is(err, chat.ErrUserNotFound), errors.Is(err, chat.ErrRoomNotFound):
+		return http.StatusNotFound
+	case errors.Is(err, chat.ErrUserNotFound):
+		return http.StatusNotFound
+	case errors.Is(err, chat.ErrRoomNotFound):
+		return http.StatusNotFound
+	case errors.Is(err, chat.ErrAlreadyExists):
+		return http.StatusConflict
+	case errors.Is(err, chat.ErrNotMember):
+		return http.StatusForbidden
+	default:
+		return http.StatusInternalServerError
+	}
 }
 
 // invalid builds a validation error for request problems the domain doesn't

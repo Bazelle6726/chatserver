@@ -48,7 +48,14 @@ func toRoomDTO(r *chat.Room) roomDTO {
 //   - m.ID and m.CreatedAt come from the embedded Meta (promoted fields)
 //   - Kind should be the readable name: m.Kind.String()
 func toMessageDTO(m chat.Message) messageDTO {
-	return messageDTO{}
+	return messageDTO{
+		ID:        string(m.ID),
+		Room:      string(m.Room),
+		Author:    string(m.Author),
+		Kind:      m.Kind.String(),
+		Text:      m.Text,
+		CreatedAt: m.CreatedAt,
+	}
 }
 
 // toMessageDTOs converts a slice. Note make with a length, then fill by index.
