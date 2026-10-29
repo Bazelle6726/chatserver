@@ -1,28 +1,30 @@
 package api
 
 import (
-	"github.com/gin-gonic/gin"
-
+	"chatserver/internal/chat"
 	"chatserver/internal/store"
+	"net/http"
+
+	"github.com/gin-gonic/gin"
 )
 
 // Auth identifies the caller from the X-User-ID header.
-// (A real app would check a password or token; this keeps stage 2 simple.)
 //
 // It's a function that RETURNS the middleware: a closure that captures s.
-//
-// TODO(27): inside the returned function:
-//   - read the header: c.GetHeader("X-User-ID")
-//   - if it's empty, or s.GetUser can't find that user, stop the request with
-//     c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "..."})
-//     and return
-//   - otherwise store the user for later handlers: c.Set(userKey, user)
-//   - then call c.Next() to run the rest of the chain
-//
-// You'll need to import "net/http" and "chatserver/internal/chat".
 func Auth(s store.Store) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		c.Next()
+		userID := c.GetHeader("X-User-ID") //header is read
+		if userID == "" {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "missing user ID"})
+			return
+		} //if it's empty, or s.GetUser can't find that user, the request is stopped
+		user, err := s.GetUser(chat.UserID(userID))
+		if err != nil {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "invalid user ID"})
+			return
+		}
+		c.Set("user", user) //user is stored for later handlers
+		c.Next()            //runs rest of the chain
 	}
 }
 
