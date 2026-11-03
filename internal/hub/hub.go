@@ -51,22 +51,36 @@ func NewHub(buffer int) *Hub {
 
 // Run is the hub's loop. Start it once, in its own goroutine: go h.Run(ctx).
 // It returns when ctx is cancelled.
-//
-// TODO(39): loop forever with a select over four cases:
-//   - a client arrives on h.register    -> h.add(c)
-//   - a client arrives on h.unregister  -> h.remove(c)
-//   - a message arrives on h.broadcast  -> h.fanOut(m)
-//   - ctx.Done() is closed              -> h.closeAll(), then return
 func (h *Hub) Run(ctx context.Context) {
+	for {
+		if ctx.Err() != nil {
+			h.closeAll()
+			break
+		}
+		select {
+		case c := <-h.register:
+			h.add(c) //a client arrives on register
+		case c := <-h.unregister:
+			h.remove(c) //a client arrives on unregister
+		case m := <-h.broadcast:
+			h.fanOut(m) //a message arrives on broadcast
+		case <-ctx.Done():
+			h.closeAll() //ctx.Done() is closed
+			return
+		}
+	}
 	defer close(h.done) // tells Join/Leave/Publish the hub has stopped
 }
 
 // add puts c into its room's set, creating the set if needed.
-//
-// TODO(40): get h.rooms[c.Room]; if it's nil, make a new
-// map[*Client]struct{} and store it; then set[c] = struct{}{}.
-// (A map of empty structs is Go's usual "set": the values take no memory.)
+
 func (h *Hub) add(c *Client) {
+	room := h.rooms[c.Room]
+	if room == nil {
+		room = make(map[*Client]struct{}) //create a new map for this room
+		h.rooms[c.Room] = room
+	}
+	room[c] = struct{}{}
 }
 
 // remove takes c out of its room and closes its outbox.
@@ -78,32 +92,46 @@ func (h *Hub) add(c *Client) {
 //   - delete it from the set; if the set is now empty, delete the room too
 //   - close(c.out): the hub is the only sender, so the hub closes it
 func (h *Hub) remove(c *Client) {
+	if _, exists := h.rooms[c.Room][c]; !exists {
+		return
+	}
+	delete(h.rooms[c.Room], c)
+	if len(h.rooms[c.Room]) == 0 {
+		delete(h.rooms, c.Room)
+	}
+	close(c.out)
 }
 
 // fanOut sends m to every client in m's room WITHOUT ever blocking.
 //
-// TODO(42): range over h.rooms[m.Room]. For each client:
-//
-//	select {
-//	case c.out <- m:
-//	    // delivered into its buffer
-//	default:
-//	    // buffer full: this client can't keep up. Drop it.
-//	    h.remove(c)
-//	    h.dropped.Add(1)
-//	}
-//
 // A plain `c.out <- m` would block the whole hub on one slow client.
 // (Deleting from a map while ranging over it is allowed in Go.)
 func (h *Hub) fanOut(m chat.Message) {
+	room := h.rooms[m.Room]
+	if room == nil {
+		return
+	}
+	for c := range room {
+		select {
+		case c.out <- m:
+			// delivered into its buffer
+		default:
+			// buffer full: this client can't keep up. Drop it.
+			h.remove(c)
+			h.dropped.Add(1)
+		}
+	}
 }
 
 // closeAll closes every client's outbox and forgets them all. Run calls it
 // on shutdown so every reader sees its channel close and can finish.
-//
-// TODO(43): for every room, for every client: close(c.out).
-// Then reset h.rooms to an empty map.
 func (h *Hub) closeAll() {
+	for _, room := range h.rooms {
+		for c := range room { //close every client's outbox
+			close(c.out)
+		}
+	}
+	h.rooms = make(map[chat.RoomID]map[*Client]struct{}) //reset h.rooms to an empty map
 }
 
 // ---- Safe to call from any goroutine (already written) ----

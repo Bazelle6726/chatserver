@@ -1,6 +1,9 @@
 package store
 
-import "fmt"
+import (
+	"fmt"
+	"sync/atomic"
+)
 
 // NewIDGenerator returns a function that produces "prefix-1", "prefix-2", ...
 //
@@ -15,9 +18,9 @@ import "fmt"
 // The counter is declared, then returns a func() string that increments it
 // and returns fmt.Sprintf("%s-%d", prefix, counter).
 func NewIDGenerator(prefix string) func() string {
-	counter := 0
+	counter := int64(0)
 	return func() string {
-		counter++
-		return fmt.Sprintf("%s-%d", prefix, counter)
+		atomic.AddInt64(&counter, 1)
+		return fmt.Sprintf("%s-%d", prefix, atomic.LoadInt64(&counter))
 	}
 }

@@ -32,25 +32,23 @@ func (p *Pool) Submit(m chat.Message) {
 }
 
 // Start launches n workers.
-//
-// TODO(44): n times:
-//   - p.wg.Add(1) BEFORE starting the goroutine (not inside it)
-//   - go func() { defer p.wg.Done(); ... }()
-//   - inside: for m := range p.jobs { ... } - the loop ends when jobs is closed
-//   - if p.banned(m.Text), set m.Text = "[removed]"
-//   - then p.deliver(m)
-//
-// m is a COPY of the message (Message is a struct value), so changing m.Text
-// doesn't change the original that's stored in the room's history.
-// (With Go 1.25+ in go.mod you could use p.wg.Go(func() { ... }) instead.)
 func (p *Pool) Start(n int) {
+	for i := 0; i < n; i++ {
+		p.wg.Add(1)
+		go func() { // each worker runs this loop
+			defer p.wg.Done()
+			for m := range p.jobs { // each worker gets a message from the jobs channel
+				if p.banned(m.Text) {
+					m.Text = "[removed]"
+				}
+				p.deliver(m)
+			}
+		}()
+	}
 }
 
 // Stop shuts the pool down after every queued message has been delivered.
-//
-// TODO(45): two steps, in this order:
-//  1. close(p.jobs) - no more work; each worker's range loop will end
-//     once the queue is empty
-//  2. p.wg.Wait()  - wait until every worker has finished
 func (p *Pool) Stop() {
+	close(p.jobs) // no more work; each loop will end once the queue is empty
+	p.wg.Wait()   // wait until every worker has finished
 }
