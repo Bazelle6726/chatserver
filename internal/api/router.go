@@ -19,6 +19,7 @@ func (a *API) Router() *gin.Engine {
 	auth.POST("/rooms/:id/members", a.joinRoom)
 	auth.POST("/rooms/:id/messages", a.postMessage)
 	auth.GET("/rooms/:id/messages", a.history)
+	auth.GET("/rooms/:id/stream", a.stream)
 
 	// Pass the method itself (a.createUser), don't call it (a.createUser()).
 

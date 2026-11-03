@@ -80,6 +80,7 @@ type postMessageReq struct {
 // POST /rooms/:id/messages  (logged in)
 func (a *API) postMessage(c *gin.Context) {
 	var req postMessageReq
+
 	if err := c.ShouldBindJSON(&req); err != nil { //binds the body
 		writeError(c, invalid("body", err.Error()))
 		return
@@ -89,6 +90,9 @@ func (a *API) postMessage(c *gin.Context) {
 	if err != nil {
 		writeError(c, err)
 		return
+	}
+	if a.publish != nil {
+		a.publish(room) //publish the message to the hub if publish is not nil
 	}
 	c.JSON(http.StatusCreated, toMessageDTO(room))
 }
