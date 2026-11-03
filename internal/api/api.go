@@ -9,6 +9,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"chatserver/internal/chat"
+	"chatserver/internal/hub"
 	"chatserver/internal/store"
 )
 
@@ -17,11 +18,24 @@ import (
 type API struct {
 	store   store.Store
 	limiter *Limiter
+
+	// Stage 3: live delivery. Both are optional (nil in most tests).
+	hub     *hub.Hub             // who's watching which room
+	publish func(m chat.Message) // called after every new message
 }
 
 // New builds the API. perSec is the rate limit per user per second.
 func New(s store.Store, perSec int) *API {
 	return &API{store: s, limiter: NewLimiter(perSec, nil)}
+}
+
+// WithHub turns on live delivery: publish is called with every new message
+// (in main it's the worker pool's Submit), and h serves the /stream endpoint.
+// It returns a so calls can be chained: api.New(s, 20).WithHub(h, pool.Submit)
+func (a *API) WithHub(h *hub.Hub, publish func(chat.Message)) *API {
+	a.hub = h
+	a.publish = publish
+	return a
 }
 
 // writeError sends an error as JSON with the right status code and stops the
