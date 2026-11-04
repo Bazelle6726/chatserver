@@ -132,29 +132,20 @@ message ConverseRequest {
 
 // -------------------------------------------------------------- service
 
-// TODO(48): write the service block, then run protoc (see the top of this file).
-//
+
 // The calls, exactly as the Go code and tests expect them:
-//
-//   rpc name      request                       response
-//   ----------    --------------------------    -----------------------
-//   CreateUser    CreateUserRequest             User
-//   GetUser       GetUserRequest                User
-//   CreateRoom    CreateRoomRequest             Room
-//   ListRooms     ListRoomsRequest              ListRoomsResponse
-//   JoinRoom      JoinRoomRequest               JoinRoomResponse
-//   PostMessage   PostMessageRequest            Message
-//   History       HistoryRequest                HistoryResponse
-//   Watch         WatchRequest                  stream Message          (server streaming)
-//   Import        stream PostMessageRequest     ImportSummary           (client streaming)
-//   Converse      stream ConverseRequest        stream Message          (bidirectional)
-//
-// The syntax:
-//
-//   service ChatService {
-//     rpc CreateUser(CreateUserRequest) returns (User);
-//     rpc Watch(WatchRequest) returns (stream Message);
-//     ...
-//   }
+
+   service ChatService {
+     rpc CreateUser(CreateUserRequest) returns (User);
+     rpc GetUser(GetUserRequest) returns (User);
+     rpc CreateRoom(CreateRoomRequest) returns (Room);
+     rpc ListRooms(ListRoomsRequest) returns (ListRoomsResponse);
+     rpc JoinRoom(JoinRoomRequest) returns (JoinRoomResponse);
+     rpc PostMessage(PostMessageRequest) returns (Message);
+     rpc History(HistoryRequest) returns (HistoryResponse);
+     rpc Watch(WatchRequest) returns (stream Message); //(server streaming)
+     rpc Import(stream PostMessageRequest) returns (ImportSummary); //(client streaming)
+     rpc Converse(stream ConverseRequest) returns (stream Message); //(bidirectional)
+   }
 //
 // "stream" before a type means "many of these, over time" on that side.
