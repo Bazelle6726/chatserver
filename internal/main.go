@@ -1,4 +1,5 @@
-// Command server runs the chat server on http://localhost:8080.
+// Command server runs the chat server: the HTTP API on http://localhost:8080
+// and the gRPC API on localhost:9090. Both share one store, hub and pool.
 //
 // Press Ctrl+C to stop it. It shuts down gracefully: in-flight requests
 // finish, live streams close, and every queued message is delivered first.
@@ -8,15 +9,21 @@ import (
 	"context"
 	"errors"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
 	"runtime"
 	"time"
 
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/reflection"
+
 	"chatserver/internal/api"
 	"chatserver/internal/chat"
+	"chatserver/internal/grpcapi"
 	"chatserver/internal/hub"
+	"chatserver/internal/pb"
 	"chatserver/internal/store"
 )
 
@@ -41,12 +48,30 @@ func main() {
 	pool := hub.NewPool(mod.IsBanned, h.Publish, 256)
 	pool.Start(runtime.NumCPU())
 
+	// HTTP (stages 2-3)
 	a := api.New(s, 20).WithHub(h, pool.Submit)
 	srv := &http.Server{Addr: ":8080", Handler: a.Router()}
-
 	go func() {
-		log.Println("chat server listening on http://localhost:8080")
+		log.Println("HTTP listening on http://localhost:8080")
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			log.Fatal(err)
+		}
+	}()
+
+	// gRPC (stage 4): the same store, hub and pool behind a second front door.
+	lis, err := net.Listen("tcp", ":9090")
+	if err != nil {
+		log.Fatal(err)
+	}
+	gs := grpc.NewServer(
+		grpc.UnaryInterceptor(grpcapi.UnaryAuth(s)),
+		grpc.StreamInterceptor(grpcapi.StreamAuth(s)),
+	)
+	pb.RegisterChatServiceServer(gs, grpcapi.New(s, h, pool.Submit))
+	reflection.Register(gs) // lets tools like grpcurl list the service without the .proto
+	go func() {
+		log.Println("gRPC listening on localhost:9090")
+		if err := gs.Serve(lis); err != nil {
 			log.Fatal(err)
 		}
 	}()
@@ -56,15 +81,31 @@ func main() {
 
 	// The ORDER matters:
 	// 1. The hub stops (it watches ctx) and closes every client's outbox,
-	//    so every /stream handler returns.
+	//    so every /stream handler, Watch and Converse returns.
 	<-hubDone
-	// 2. Stop accepting requests and wait (up to 5s) for in-flight ones.
-	//    After this no handler can call pool.Submit any more.
+
+	// 2. Stop both front doors and wait for calls already running. After this
+	//    nothing can call pool.Submit any more.
+	//    GracefulStop waits for every running RPC with no time limit, and an
+	//    Import whose client never finishes would wait forever. So give it 5s,
+	//    then Stop, which cuts the remaining calls off.
+	grpcStopped := make(chan struct{})
+	go func() {
+		gs.GracefulStop()
+		close(grpcStopped)
+	}()
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if err := srv.Shutdown(shutdownCtx); err != nil {
-		log.Println("shutdown:", err)
+		log.Println("HTTP shutdown:", err)
 	}
+	select {
+	case <-grpcStopped:
+	case <-shutdownCtx.Done():
+		gs.Stop()
+		<-grpcStopped
+	}
+
 	// 3. Only now stop the pool: closing its jobs channel earlier could make a
 	//    late request panic with "send on closed channel".
 	pool.Stop()

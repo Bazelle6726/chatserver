@@ -1,0 +1,160 @@
+// chat.proto describes the chat server's gRPC API: the messages (data) and
+// the service (the calls a client can make). protoc reads this file and
+// generates Go code for both the server and the client:
+//
+//   chat.pb.go       - a Go struct for every message, an int32 type for every enum
+//   chat_grpc.pb.go  - the ChatServiceServer interface to implement, and a ready-made client
+//
+// Regenerate after every change (from the project root):
+//
+//   protoc --go_out=. --go_opt=paths=source_relative --go-grpc_out=. --go-grpc_opt=paths=source_relative internal/pb/chat.proto
+//
+// Never edit the generated files by hand: the next protoc run overwrites them.
+
+syntax = "proto3";
+
+// The protobuf package: part of every method's full name, e.g.
+// "/chat.v1.ChatService/CreateUser". The "v1" leaves room for a v2 later.
+package chat.v1;
+
+// The Go import path of the generated code.
+option go_package = "chatserver/internal/pb";
+
+// ---------------------------------------------------------------- enums
+//
+// In proto3 the first value must be 0, and by convention it's an
+// "unspecified" value: a field that was never set reads as 0. Enum values
+// are global within the package, so each one is prefixed with its enum name.
+
+enum Role {
+  ROLE_UNSPECIFIED = 0;
+  ROLE_GUEST = 1;
+  ROLE_MEMBER = 2;
+  ROLE_ADMIN = 3;
+}
+
+// Same numbers as chat.MessageKind in Go, on purpose (see convert.go).
+enum MessageKind {
+  MESSAGE_KIND_UNSPECIFIED = 0;
+  MESSAGE_KIND_TEXT = 1;
+  MESSAGE_KIND_JOIN = 2;
+  MESSAGE_KIND_LEAVE = 3;
+  MESSAGE_KIND_SYSTEM = 4;
+}
+
+// ------------------------------------------------------------- messages
+//
+// The number after each field is its tag: what's actually sent on the wire
+// instead of the name. Once clients exist, never change or reuse a tag.
+// Field names are snake_case here and become CamelCase in Go:
+// room_id -> RoomId, created_at_unix_milli -> CreatedAtUnixMilli.
+
+message User {
+  string id = 1;
+  string name = 2;
+  Role role = 3;
+}
+
+message Room {
+  string id = 1;
+  string name = 2;
+  int32 members = 3;
+}
+
+message Message {
+  string id = 1;
+  string room_id = 2;
+  string author_id = 3;
+  MessageKind kind = 4;
+  string text = 5;
+  int64 created_at_unix_milli = 6; // milliseconds since 1 Jan 1970 (UTC)
+}
+
+// Every call gets its own request and response type, even when it's empty
+// or the same as another call's today. That way a field can be added to one
+// call later without touching the others.
+
+message CreateUserRequest {
+  string name = 1;
+}
+
+message GetUserRequest {
+  string id = 1;
+}
+
+message CreateRoomRequest {
+  string name = 1;
+  int32 max_history = 2; // 0 = the default (100)
+}
+
+message ListRoomsRequest {}
+
+message ListRoomsResponse {
+  repeated Room rooms = 1; // repeated = a list; a []*Room in Go
+}
+
+message JoinRoomRequest {
+  string room_id = 1;
+}
+
+message JoinRoomResponse {}
+
+message PostMessageRequest {
+  string room_id = 1;
+  string text = 2;
+}
+
+message HistoryRequest {
+  string room_id = 1;
+  int32 limit = 2; // 0 = the default (50)
+}
+
+message HistoryResponse {
+  repeated Message messages = 1;
+}
+
+message WatchRequest {
+  string room_id = 1;
+}
+
+message ImportSummary {
+  int32 posted = 1;
+}
+
+// The first message on a Converse stream says which room to join; every
+// message after it is text to post. A oneof holds at most one of its fields.
+message ConverseRequest {
+  oneof action {
+    string join_room_id = 1;
+    string text = 2;
+  }
+}
+
+// -------------------------------------------------------------- service
+
+// TODO(48): write the service block, then run protoc (see the top of this file).
+//
+// The calls, exactly as the Go code and tests expect them:
+//
+//   rpc name      request                       response
+//   ----------    --------------------------    -----------------------
+//   CreateUser    CreateUserRequest             User
+//   GetUser       GetUserRequest                User
+//   CreateRoom    CreateRoomRequest             Room
+//   ListRooms     ListRoomsRequest              ListRoomsResponse
+//   JoinRoom      JoinRoomRequest               JoinRoomResponse
+//   PostMessage   PostMessageRequest            Message
+//   History       HistoryRequest                HistoryResponse
+//   Watch         WatchRequest                  stream Message          (server streaming)
+//   Import        stream PostMessageRequest     ImportSummary           (client streaming)
+//   Converse      stream ConverseRequest        stream Message          (bidirectional)
+//
+// The syntax:
+//
+//   service ChatService {
+//     rpc CreateUser(CreateUserRequest) returns (User);
+//     rpc Watch(WatchRequest) returns (stream Message);
+//     ...
+//   }
+//
+// "stream" before a type means "many of these, over time" on that side.
