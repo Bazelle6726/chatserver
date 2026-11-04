@@ -10,6 +10,8 @@ import (
 	"chatserver/internal/chat"
 	"chatserver/internal/pb"
 	"chatserver/internal/store"
+
+	"google.golang.org/grpc/metadata"
 )
 
 // gRPC has no headers in the HTTP sense, but every call carries metadata:
@@ -40,34 +42,32 @@ func currentUser(ctx context.Context) *chat.User {
 }
 
 // authenticate finds the calling user from the call's metadata.
-//
-// TODO(51):
-//   - md, _ := metadata.FromIncomingContext(ctx)   (import google.golang.org/grpc/metadata)
-//   - md.Get(userIDKey) returns a []string (a key can have several values)
-//   - none, or the first one is "": return codes.Unauthenticated,
-//     "missing x-user-id metadata"
-//   - s.GetUser(...) fails: return codes.Unauthenticated, "unknown user"
-//     (not NotFound: to the caller it means "you're not logged in")
-//   - otherwise return the user
-//
-// md is nil when there's no metadata at all, and Get on a nil map is fine.
 func authenticate(ctx context.Context, s store.Store) (*chat.User, error) {
-	return nil, status.Error(codes.Unimplemented, "TODO(51): authenticate")
+	md, _ := metadata.FromIncomingContext(ctx)
+	userID := md.Get(userIDKey)
+	if len(userID) == 0 || userID[0] == "" {
+		return nil, status.Error(codes.Unauthenticated, "missing x-user-id metadata")
+	}
+	u, err := s.GetUser(chat.UserID(userID[0]))
+	if err != nil {
+		return nil, status.Error(codes.Unauthenticated, "unknown user")
+	}
+	return u, nil
 }
 
 // UnaryAuth is gRPC's version of the Auth middleware, for unary calls.
 // An interceptor wraps every call, like Gin middleware: calling handler is
 // c.Next(), and returning an error instead is c.Abort().
-//
-// TODO(52): for a non-public method, authenticate; on error return nil, err.
-// Otherwise call the handler with a context that carries the user:
-// handler(withUser(ctx, u), req)
 func UnaryAuth(s store.Store) grpc.UnaryServerInterceptor {
 	return func(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
 		if public[info.FullMethod] {
 			return handler(ctx, req)
 		}
-		return nil, status.Error(codes.Unimplemented, "TODO(52): UnaryAuth")
+		u, err := authenticate(ctx, s)
+		if err != nil {
+			return nil, err
+		}
+		return handler(withUser(ctx, u), req)
 	}
 }
 
@@ -86,13 +86,12 @@ func (a *authedStream) Context() context.Context { return a.ctx }
 
 // StreamAuth is the same for streaming calls. Every streaming call needs a
 // logged-in user.
-//
-// TODO(53): authenticate with ss.Context(); on error return it.
-// Otherwise call the handler with a wrapped stream:
-//
-//	handler(srv, &authedStream{ServerStream: ss, ctx: withUser(ss.Context(), u)})
 func StreamAuth(s store.Store) grpc.StreamServerInterceptor {
 	return func(srv any, ss grpc.ServerStream, info *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
-		return status.Error(codes.Unimplemented, "TODO(53): StreamAuth")
+		u, err := authenticate(ss.Context(), s)
+		if err != nil {
+			return err
+		}
+		return handler(srv, &authedStream{ServerStream: ss, ctx: withUser(ss.Context(), u)})
 	}
 }

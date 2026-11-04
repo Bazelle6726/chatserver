@@ -3,9 +3,6 @@ package grpcapi
 import (
 	"context"
 
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
-
 	"chatserver/internal/chat"
 	"chatserver/internal/pb"
 )
@@ -33,37 +30,73 @@ func (s *Server) GetUser(ctx context.Context, req *pb.GetUserRequest) (*pb.User,
 	return toPBUser(u), nil
 }
 
-// TODO(54): like createRoom over HTTP:
-//   - max := int(req.GetMaxHistory()); 0 means defaultMaxHistory
-//   - below 0 or above maxMaxHistory: toStatus(invalid("max_history", "must be 1-1000"))
-//   - s.store.CreateRoom, then return toPBRoom(r)
+// like createRoom over HTTP:
 func (s *Server) CreateRoom(ctx context.Context, req *pb.CreateRoomRequest) (*pb.Room, error) {
-	return nil, status.Error(codes.Unimplemented, "TODO(54): CreateRoom")
+	max := int(req.GetMaxHistory())
+	if max == 0 {
+		max = defaultMaxHistory
+	}
+	if max < 1 || max > maxMaxHistory {
+		return nil, toStatus(invalid("max_history", "must be 1-1000"))
+	}
+	r, err := s.store.CreateRoom(req.GetName(), max)
+	if err != nil {
+		return nil, toStatus(err)
+	}
+	return toPBRoom(r), nil
+	//return nil, status.Error(codes.Unimplemented, "TODO(54): CreateRoom")
 }
 
-// TODO(55): convert every room from s.store.ListRooms() into a []*pb.Room
-// and return &pb.ListRoomsResponse{Rooms: ...}
+// Converts every room from s.store.ListRooms() into a []*pb.Room
+// and returns &pb.ListRoomsResponse{Rooms: ...}
 func (s *Server) ListRooms(ctx context.Context, req *pb.ListRoomsRequest) (*pb.ListRoomsResponse, error) {
-	return nil, status.Error(codes.Unimplemented, "TODO(55): ListRooms")
+	List := s.store.ListRooms()
+	pbRooms := make([]*pb.Room, len(List))
+	for i, r := range List {
+		pbRooms[i] = toPBRoom(r)
+	}
+	return &pb.ListRoomsResponse{Rooms: pbRooms}, nil
+	//return nil, status.Error(codes.Unimplemented, "TODO(55): ListRooms")
 }
 
-// TODO(56): get the room, then room.Join(currentUser(ctx).ID).
-// Return &pb.JoinRoomResponse{} (empty, but never nil) on success.
+// get the room, then room.Join(currentUser(ctx).ID).
 func (s *Server) JoinRoom(ctx context.Context, req *pb.JoinRoomRequest) (*pb.JoinRoomResponse, error) {
-	return nil, status.Error(codes.Unimplemented, "TODO(56): JoinRoom")
+	user := currentUser(ctx)
+	room, err := s.store.GetRoom(chat.RoomID(req.GetRoomId())) //get the room
+	if err != nil {
+		return nil, toStatus(err)
+	}
+	err = room.Join(user.ID) //join the room with the current user's ID
+	if err != nil {
+		return nil, toStatus(err)
+	}
+	return &pb.JoinRoomResponse{}, nil //return &pb.JoinRoomResponse{}, nil
+	//return nil, status.Error(codes.Unimplemented, "TODO(56): JoinRoom")
 }
 
-// TODO(57): use s.post (in server.go): it stores the message AND publishes
+// Uses s.post (from server.go): stores the message AND publishes
 // it. Return toPBMessage of the stored message.
 func (s *Server) PostMessage(ctx context.Context, req *pb.PostMessageRequest) (*pb.Message, error) {
-	return nil, status.Error(codes.Unimplemented, "TODO(57): PostMessage")
+	user := currentUser(ctx)
+	msg, err := s.post(user.ID, req.GetRoomId(), req.GetText())
+	if err != nil {
+		return nil, toStatus(err)
+	}
+	return toPBMessage(msg), nil
+	//return nil, status.Error(codes.Unimplemented, "TODO(57): PostMessage")
 }
 
-// TODO(58): like history over HTTP:
-//   - get the room
-//   - limit := int(req.GetLimit()); 0 means defaultLimit
-//   - below 1 or above maxLimit: toStatus(invalid("limit", "must be 1-500"))
-//   - return &pb.HistoryResponse{Messages: toPBMessages(room.LastN(limit))}
 func (s *Server) History(ctx context.Context, req *pb.HistoryRequest) (*pb.HistoryResponse, error) {
-	return nil, status.Error(codes.Unimplemented, "TODO(58): History")
+	room, err := s.store.GetRoom(chat.RoomID(req.GetRoomId())) //get the room
+	if err != nil {
+		return nil, toStatus(err)
+	}
+	limit := int(req.GetLimit()) //get the limit
+	if limit == 0 {
+		limit = defaultLimit
+	}
+	if limit < 1 || limit > maxLimit {
+		return nil, toStatus(invalid("limit", "must be 1-500"))
+	}
+	return &pb.HistoryResponse{Messages: toPBMessages(room.LastN(limit))}, nil
 }

@@ -20,7 +20,7 @@ import (
 func NewIDGenerator(prefix string) func() string {
 	counter := int64(0)
 	return func() string {
-		atomic.AddInt64(&counter, 1)
-		return fmt.Sprintf("%s-%d", prefix, atomic.LoadInt64(&counter))
+		n := atomic.AddInt64(&counter, 1)
+		return fmt.Sprintf("%s-%d", prefix, n)
 	}
 }

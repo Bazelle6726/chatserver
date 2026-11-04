@@ -55,19 +55,37 @@ func (s *Server) Converse(stream grpc.BidiStreamingServer[pb.ConverseRequest, pb
 		return err
 	}
 
-	// TODO(61): the reader goroutine.
-	//   - recvErr := make(chan error, 1). Buffered, so the goroutine can always
-	//     hand over its error and exit, even if Converse has already returned
-	//     (otherwise it would be stuck forever: a goroutine leak)
-	//   - go func() { for { ... } }(): req, err := stream.Recv(); on error send
-	//     it on recvErr and return. Otherwise s.post(user.ID, roomID, req.GetText());
-	//     if that fails, send toStatus(err) on recvErr and return.
+	recvErr := make(chan error, 1)
+	go func() {
+		for {
+			req, err := stream.Recv()
+			if err != nil {
+				recvErr <- err // includes io.EOF: the client closed its side
+				return
+			}
+			if _, err := s.post(user.ID, roomID, req.GetText()); err != nil {
+				recvErr <- toStatus(err)
+				return
+			}
+		}
+	}()
 
-	// TODO(62): the writer loop, this goroutine. Like Watch, plus one case:
-	//   - m, ok := <-client.Out(): !ok -> return codes.Unavailable;
-	//     else stream.Send(toPBMessage(m)), returning its error
-	//   - err := <-recvErr: io.EOF means the client finished: return nil.
-	//     Anything else: return err
-	//   - <-ctx.Done(): return nil
-	return status.Error(codes.Unimplemented, "TODO(61-62): Converse")
+	for {
+		select {
+		case m, ok := <-client.Out():
+			if !ok {
+				return status.Error(codes.Unavailable, "stream closed by the server: too slow, or shutting down")
+			}
+			if err := stream.Send(toPBMessage(m)); err != nil {
+				return err
+			}
+		case err := <-recvErr:
+			if errors.Is(err, io.EOF) {
+				return nil // the client said it's done
+			}
+			return err
+		case <-ctx.Done():
+			return nil // the client went away
+		}
+	}
 }

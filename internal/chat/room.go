@@ -1,10 +1,14 @@
 package chat
 
-import "maps"
+import (
+	"maps"
+	"sync"
+)
 
 // Room holds members and a capped message history.
-// No locks yet - stage 3 adds a sync.RWMutex when goroutines arrive.
+// mu protects members and history: many readers at once, or one writer.
 type Room struct {
+	mu         sync.RWMutex
 	ID         RoomID
 	Name       string
 	Settings   map[string]string
@@ -30,7 +34,9 @@ func NewRoom(id RoomID, name string, maxHistory int) *Room {
 
 // User added to members. ErrAlreadyExists returns if already there.
 func (r *Room) Join(id UserID) error {
-	if r.IsMember(id) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.isMember(id) {
 		return ErrAlreadyExists
 	}
 	r.members[id] = struct{}{}
@@ -39,7 +45,9 @@ func (r *Room) Join(id UserID) error {
 
 // Returns ErrNotMember if they weren't a member.
 func (r *Room) Leave(id UserID) error {
-	if !r.IsMember(id) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if !r.isMember(id) {
 		return ErrNotMember
 	}
 	delete(r.members, id)
@@ -48,12 +56,22 @@ func (r *Room) Leave(id UserID) error {
 
 // IsMember uses the "comma ok" map read.
 func (r *Room) IsMember(id UserID) bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.isMember(id)
+}
+
+// isMember is IsMember without the lock, for methods that already hold r.mu.
+// Calling IsMember there would lock twice and deadlock.
+func (r *Room) isMember(id UserID) bool {
 	_, ok := r.members[id]
 	return ok
 }
 
 // MemberCount returns the number of members.
 func (r *Room) MemberCount() int {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
 	return len(r.members)
 }
 
@@ -64,7 +82,9 @@ func (r *Room) MemberCount() int {
 //     first to make room
 //   - then the new message appends to the end of the slice (newest last)
 func (r *Room) AddMessage(msg Message) error {
-	if !r.IsMember(msg.Author) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if !r.isMember(msg.Author) {
 		return ErrNotMember
 	}
 	if len(r.history) == r.maxHistory {
@@ -82,6 +102,8 @@ func (r *Room) AddMessage(msg Message) error {
 // the whole backing array alive (slices share their underlying array).
 // If n <= 0 return an empty (non-nil) slice.
 func (r *Room) LastN(n int) []Message {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
 	if n <= 0 {
 		return make([]Message, 0)
 	}
@@ -97,5 +119,7 @@ func (r *Room) LastN(n int) []Message {
 //
 // maps.Clone returns a shallow copy
 func (r *Room) SettingsCopy() map[string]string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
 	return maps.Clone(r.Settings)
 }
