@@ -11,6 +11,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	_ "net/http/pprof"
 	"os"
 	"os/signal"
 	"runtime"
@@ -31,6 +32,14 @@ func main() {
 	// ctx is cancelled when you press Ctrl+C. Everything long-running watches it.
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
+
+	// pprof: profiling endpoints, on their own port and only on localhost.
+	go func() {
+		log.Println("pprof on http://localhost:6060/debug/pprof/")
+		if err := http.ListenAndServe("localhost:6060", nil); err != nil {
+			log.Println("pprof:", err)
+		}
+	}()
 
 	s := store.NewMemoryStore()
 

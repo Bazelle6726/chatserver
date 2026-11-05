@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"sync"
 	"sync/atomic"
@@ -99,23 +98,31 @@ func run(ctx context.Context, client pb.ChatServiceClient, cfg Config) (Result, 
 
 // watch is one watcher: it opens a Watch stream, reports on ready once it's
 // really watching (or why it couldn't), then counts messages until ctx ends.
-//
-// TODO(71):
-//  1. stream, err := client.Watch(as(ctx, user), &pb.WatchRequest{RoomId: room})
-//  2. if that worked, wait for the server's header: md, err := stream.Header().
-//     Watch sends it once it has joined the hub, so after this nothing posted
-//     can be missed. (Watch that variable shadowing: use = for err here.)
-//  3. gRPC quirk: if the call ended before any header (say the room doesn't
-//     exist), Header returns nil, nil. Then call stream.Recv(), whose error
-//     is the real reason.
-//  4. send the result on ready, error or nil: ready <- err. run waits for
-//     one value from every watcher before posting starts. Return if it failed.
-//  5. loop: stream.Recv(); on error return (ctx was cancelled: the test is
-//     over), else received.Add(1)
-//
-// Check (with TODO 72 too): go test ./cmd/loadtest -v
 func watch(ctx context.Context, client pb.ChatServiceClient, user, room string, ready chan<- error, received *atomic.Int64) {
-	ready <- errors.New("TODO(71): watch")
+	// 1. Open the stream, then wait for the server's header.
+	stream, err := client.Watch(as(ctx, user), &pb.WatchRequest{RoomId: room})
+	if err == nil {
+		var md metadata.MD
+		md, err = stream.Header()
+		if err == nil && md == nil {
+			// The call ended before any header: Recv returns the reason.
+			_, err = stream.Recv()
+		}
+	}
+
+	// 2. Report: nil = watching, an error = why not. Always exactly once.
+	ready <- err
+	if err != nil {
+		return
+	}
+
+	// 3. Count messages until the stream ends (ctx cancelled = test over).
+	for {
+		if _, err := stream.Recv(); err != nil {
+			return
+		}
+		received.Add(1)
+	}
 }
 
 // posterResult is one poster's measurements.
@@ -126,20 +133,29 @@ type posterResult struct {
 
 // post is one poster: it posts rate messages a second until ctx ends, and
 // times every call.
-//
-// TODO(72):
-//   - var res posterResult
-//   - a ticker: time.NewTicker(time.Duration(float64(time.Second) / rate)),
-//     and defer tick.Stop() (a ticker that's never stopped keeps running)
-//   - ctx = as(ctx, user), so every post is made as this user
-//   - loop, counting n from 1:
-//   - select: <-ctx.Done() -> return res; <-tick.C -> carry on
-//   - start := time.Now(), then client.PostMessage(ctx, ...) with RoomId room
-//     and any text, e.g. fmt.Sprintf("load %s #%d", user, n)
-//   - on error: if ctx.Err() != nil, return res (the time ran out during the
-//     call, which isn't a failure); otherwise res.failed++ and continue
-//   - on success: append time.Since(start) to res.latencies
 func post(ctx context.Context, client pb.ChatServiceClient, user, room string, rate float64) posterResult {
-	<-ctx.Done()
-	return posterResult{}
+	var res posterResult // one poster's measurements
+	tick := time.NewTicker(time.Duration(float64(time.Second) / rate))
+	defer tick.Stop()
+	ctx = as(ctx, user)
+	for n := 1; ; n++ {
+		select {
+		case <-ctx.Done():
+			return res
+		case <-tick.C:
+		}
+		start := time.Now() // time the call, not the tick
+		_, err := client.PostMessage(ctx, &pb.PostMessageRequest{
+			RoomId: room,
+			Text:   fmt.Sprintf("load %s #%d", user, n),
+		})
+		if err != nil {
+			if ctx.Err() != nil {
+				return res
+			}
+			res.failed++
+			continue
+		}
+		res.latencies = append(res.latencies, time.Since(start))
+	}
 }
