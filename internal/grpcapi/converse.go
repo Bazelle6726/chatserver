@@ -11,6 +11,7 @@ import (
 
 	"chatserver/internal/chat"
 	"chatserver/internal/pb"
+	"chatserver/internal/pbconv"
 )
 
 // Converse is bidirectional streaming: one call where the client posts
@@ -76,7 +77,7 @@ func (s *Server) Converse(stream grpc.BidiStreamingServer[pb.ConverseRequest, pb
 			if !ok {
 				return status.Error(codes.Unavailable, "stream closed by the server: too slow, or shutting down")
 			}
-			if err := stream.Send(toPBMessage(m)); err != nil {
+			if err := stream.Send(pbconv.Message(m)); err != nil {
 				return err
 			}
 		case err := <-recvErr:

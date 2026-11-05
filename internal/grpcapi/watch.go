@@ -3,6 +3,7 @@ package grpcapi
 import (
 	"chatserver/internal/chat"
 	"chatserver/internal/pb"
+	"chatserver/internal/pbconv"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -29,7 +30,7 @@ func (s *Server) Watch(req *pb.WatchRequest, stream grpc.ServerStreamingServer[p
 			if !ok {
 				return status.Error(codes.Unavailable, "hub dropped or shutting down")
 			}
-			if err := stream.Send(toPBMessage(m)); err != nil {
+			if err := stream.Send(pbconv.Message(m)); err != nil {
 				return err
 			}
 		case <-ctx.Done():

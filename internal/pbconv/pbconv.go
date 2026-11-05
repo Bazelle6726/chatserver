@@ -1,13 +1,11 @@
-package grpcapi
+package pbconv
 
 import (
 	"chatserver/internal/chat"
 	"chatserver/internal/pb"
 )
 
-// These convert domain types into the generated protobuf types. They're the
-// gRPC version of api/dto.go.
-func toPBRole(r chat.Role) pb.Role {
+func role(r chat.Role) pb.Role {
 	switch r {
 	case chat.RoleGuest:
 		return pb.Role_ROLE_GUEST
@@ -20,19 +18,17 @@ func toPBRole(r chat.Role) pb.Role {
 	}
 }
 
-// toPBUser: &pb.User{...} with Id, Name and Role (use toPBRole).
-// IDs are defined types: converted with string(u.ID).
-func toPBUser(u *chat.User) *pb.User {
+// User converts a user.
+func User(u *chat.User) *pb.User {
 	return &pb.User{
 		Id:   string(u.ID),
 		Name: u.Name,
-		Role: toPBRole(u.Role),
+		Role: role(u.Role),
 	}
 }
 
-// toPBRoom: Id, Name, and Members from r.MemberCount(). Members is an int32
-// in proto, so converted: int32(...).
-func toPBRoom(r *chat.Room) *pb.Room {
+// Room converts a room.
+func Room(r *chat.Room) *pb.Room {
 	return &pb.Room{
 		Id:      string(r.ID),
 		Name:    r.Name,
@@ -40,8 +36,8 @@ func toPBRoom(r *chat.Room) *pb.Room {
 	}
 }
 
-// toPBMessage: Id, RoomId, AuthorId, Kind, Text, CreatedAtUnixMilli.
-func toPBMessage(m chat.Message) *pb.Message {
+// Message converts a message.
+func Message(m chat.Message) *pb.Message {
 	return &pb.Message{
 		Id:                 string(m.ID),
 		RoomId:             string(m.Room),
@@ -52,11 +48,11 @@ func toPBMessage(m chat.Message) *pb.Message {
 	}
 }
 
-// toPBMessages converts a slice. Return an empty slice, not nil, for no messages.
-func toPBMessages(ms []chat.Message) []*pb.Message {
+// Messages converts a slice of messages (never returns nil).
+func Messages(ms []chat.Message) []*pb.Message {
 	pbMessages := make([]*pb.Message, len(ms))
 	for i, m := range ms {
-		pbMessages[i] = toPBMessage(m)
+		pbMessages[i] = Message(m)
 	}
 	return pbMessages
 }

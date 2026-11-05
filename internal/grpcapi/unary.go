@@ -5,6 +5,7 @@ import (
 
 	"chatserver/internal/chat"
 	"chatserver/internal/pb"
+	"chatserver/internal/pbconv"
 )
 
 // Each unary method is a handler like in package api, but simpler: gRPC has
@@ -19,7 +20,7 @@ func (s *Server) CreateUser(ctx context.Context, req *pb.CreateUserRequest) (*pb
 	if err != nil {
 		return nil, toStatus(err)
 	}
-	return toPBUser(u), nil
+	return pbconv.User(u), nil
 }
 
 func (s *Server) GetUser(ctx context.Context, req *pb.GetUserRequest) (*pb.User, error) {
@@ -27,7 +28,7 @@ func (s *Server) GetUser(ctx context.Context, req *pb.GetUserRequest) (*pb.User,
 	if err != nil {
 		return nil, toStatus(err)
 	}
-	return toPBUser(u), nil
+	return pbconv.User(u), nil
 }
 
 // like createRoom over HTTP:
@@ -43,7 +44,7 @@ func (s *Server) CreateRoom(ctx context.Context, req *pb.CreateRoomRequest) (*pb
 	if err != nil {
 		return nil, toStatus(err)
 	}
-	return toPBRoom(r), nil
+	return pbconv.Room(r), nil
 	//return nil, status.Error(codes.Unimplemented, "TODO(54): CreateRoom")
 }
 
@@ -53,7 +54,7 @@ func (s *Server) ListRooms(ctx context.Context, req *pb.ListRoomsRequest) (*pb.L
 	List := s.store.ListRooms()
 	pbRooms := make([]*pb.Room, len(List))
 	for i, r := range List {
-		pbRooms[i] = toPBRoom(r)
+		pbRooms[i] = pbconv.Room(r)
 	}
 	return &pb.ListRoomsResponse{Rooms: pbRooms}, nil
 	//return nil, status.Error(codes.Unimplemented, "TODO(55): ListRooms")
@@ -82,7 +83,7 @@ func (s *Server) PostMessage(ctx context.Context, req *pb.PostMessageRequest) (*
 	if err != nil {
 		return nil, toStatus(err)
 	}
-	return toPBMessage(msg), nil
+	return pbconv.Message(msg), nil
 	//return nil, status.Error(codes.Unimplemented, "TODO(57): PostMessage")
 }
 
@@ -98,5 +99,5 @@ func (s *Server) History(ctx context.Context, req *pb.HistoryRequest) (*pb.Histo
 	if limit < 1 || limit > maxLimit {
 		return nil, toStatus(invalid("limit", "must be 1-500"))
 	}
-	return &pb.HistoryResponse{Messages: toPBMessages(room.LastN(limit))}, nil
+	return &pb.HistoryResponse{Messages: pbconv.Messages(room.LastN(limit))}, nil
 }
