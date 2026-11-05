@@ -2,6 +2,8 @@ package api
 
 import (
 	"chatserver/internal/chat"
+	"chatserver/internal/pb"
+	"chatserver/internal/pbconv"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -17,7 +19,8 @@ type createUserReq struct {
 // handler
 func (a *API) createUser(c *gin.Context) { //JSON body is bound to a struct
 	var req createUserReq
-	if err := c.ShouldBindJSON(&req); err != nil {
+	msg := &pb.CreateUserRequest{}
+	if err := bindBody(c, &req, msg, func() { req.Name = msg.Name }); err != nil {
 		writeError(c, invalid("body", err.Error()))
 		return
 	}
@@ -26,7 +29,7 @@ func (a *API) createUser(c *gin.Context) { //JSON body is bound to a struct
 		writeError(c, err)
 		return
 	}
-	c.JSON(http.StatusCreated, toUserDTO(user)) //responds in JSON and HTTP 201
+	respond(c, http.StatusCreated, toUserDTO(user), pbconv.User(user)) //responds in JSON and HTTP 201
 }
 
 // GET /users/:id
@@ -38,5 +41,5 @@ func (a *API) getUser(c *gin.Context) {
 		writeError(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, toUserDTO(user))
+	respond(c, http.StatusOK, toUserDTO(user), pbconv.User(user))
 }
