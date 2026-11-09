@@ -104,7 +104,7 @@ Dependencies point inwards: `api` and `grpcapi` depend on `hub` and `store`, whi
 ### Run it
 
 ```bash
-git clone https://github.com/<your-username>/chatserver.git
+git clone https://github.com/<Bazelle6726>/chatserver.git
 cd chatserver
 go run ./cmd/server
 ```
