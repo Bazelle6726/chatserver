@@ -83,17 +83,6 @@ func (r *Room) MemberCount() int {
 //     first to make room
 //   - then the new message appends to the end of the slice (newest last)
 func (r *Room) AddMessage(msg Message) error {
-	// r.mu.Lock()
-	// defer r.mu.Unlock()
-	// if !r.isMember(msg.Author) {
-	// 	return ErrNotMember
-	// }
-	// if len(r.history) == r.maxHistory {
-	// 	copy(r.history, r.history[1:])
-	// 	r.history = r.history[:r.maxHistory-1]
-	// }
-	// r.history = append(r.history, msg)
-	// return nil
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if !r.isMember(msg.Author) {
@@ -115,17 +104,6 @@ func (r *Room) AddMessage(msg Message) error {
 // the whole backing array alive (slices share their underlying array).
 // If n <= 0 return an empty (non-nil) slice.
 func (r *Room) LastN(n int) []Message {
-	// r.mu.RLock()
-	// defer r.mu.RUnlock()
-	// if n <= 0 {
-	// 	return make([]Message, 0)
-	// }
-	// if n > len(r.history) {
-	// 	n = len(r.history)
-	// }
-	// result := make([]Message, n)
-	// copy(result, r.history[len(r.history)-n:])
-	// return result
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	if n <= 0 {
