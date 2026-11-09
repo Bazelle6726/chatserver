@@ -14,6 +14,7 @@ type Room struct {
 	Settings   map[string]string
 	members    map[UserID]struct{} // empty struct as a "set": uses no memory per value
 	history    []Message
+	start      int
 	maxHistory int
 }
 
@@ -82,16 +83,28 @@ func (r *Room) MemberCount() int {
 //     first to make room
 //   - then the new message appends to the end of the slice (newest last)
 func (r *Room) AddMessage(msg Message) error {
+	// r.mu.Lock()
+	// defer r.mu.Unlock()
+	// if !r.isMember(msg.Author) {
+	// 	return ErrNotMember
+	// }
+	// if len(r.history) == r.maxHistory {
+	// 	copy(r.history, r.history[1:])
+	// 	r.history = r.history[:r.maxHistory-1]
+	// }
+	// r.history = append(r.history, msg)
+	// return nil
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if !r.isMember(msg.Author) {
 		return ErrNotMember
 	}
-	if len(r.history) == r.maxHistory {
-		copy(r.history, r.history[1:])
-		r.history = r.history[:r.maxHistory-1]
+	if len(r.history) < r.maxHistory {
+		r.history = append(r.history, msg) // not full yet: just append
+		return nil
 	}
-	r.history = append(r.history, msg)
+	r.history[r.start] = msg               // full: overwrite the oldest...
+	r.start = (r.start + 1) % r.maxHistory // ...and move "oldest" on, wrapping to 0
 	return nil
 }
 
@@ -102,17 +115,29 @@ func (r *Room) AddMessage(msg Message) error {
 // the whole backing array alive (slices share their underlying array).
 // If n <= 0 return an empty (non-nil) slice.
 func (r *Room) LastN(n int) []Message {
+	// r.mu.RLock()
+	// defer r.mu.RUnlock()
+	// if n <= 0 {
+	// 	return make([]Message, 0)
+	// }
+	// if n > len(r.history) {
+	// 	n = len(r.history)
+	// }
+	// result := make([]Message, n)
+	// copy(result, r.history[len(r.history)-n:])
+	// return result
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	if n <= 0 {
-		return make([]Message, 0)
+		return []Message{}
 	}
-	if n > len(r.history) {
-		n = len(r.history)
+	size := len(r.history)
+	n = min(n, size)
+	out := make([]Message, n)
+	for i := range n {
+		out[i] = r.history[(r.start+size-n+i)%size] // read in order, wrapping round
 	}
-	result := make([]Message, n)
-	copy(result, r.history[len(r.history)-n:])
-	return result
+	return out
 }
 
 // SettingsCopy returns a copy of the settings so callers can't modify the room's map.
