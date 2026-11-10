@@ -279,4 +279,3 @@ func TestRoomsAndMessagesInProtobuf(t *testing.T) {
 		t.Errorf("error body = %v, want field text", body)
 	}
 }
-

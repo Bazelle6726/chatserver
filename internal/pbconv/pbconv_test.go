@@ -59,4 +59,3 @@ func TestConvert(t *testing.T) {
 		t.Errorf("Messages(nil) = %v, want an empty (non-nil) slice", got)
 	}
 }
-
