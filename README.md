@@ -4,8 +4,6 @@ A multi-room chat server written in Go, with a REST API, a gRPC API, live messag
 
 Users create rooms, join them and post messages. Anyone watching a room gets new messages **pushed to them the moment they're posted**, over Server-Sent Events or a gRPC stream. A pool of worker goroutines filters banned words from the live feed. It all runs in **one Go program**, in memory, with no external services.
 
-I built it as a learning project, test-first, in six stages. Each stage introduced one area of Go: error handling, HTTP APIs with Gin, concurrency, gRPC and protobuf, content negotiation, and performance work.
-
 ---
 
 ## Contents
@@ -17,6 +15,7 @@ I built it as a learning project, test-first, in six stages. Each stage introduc
 - [A quick tour](#a-quick-tour)
 - [HTTP API](#http-api)
 - [Live updates (SSE)](#live-updates-sse)
+- [Moderation](#moderation)
 - [gRPC API](#grpc-api)
 - [Protobuf over HTTP](#protobuf-over-http)
 - [Testing](#testing)
@@ -33,7 +32,7 @@ I built it as a learning project, test-first, in six stages. Each stage introduc
 - **gRPC API** on a second port, defined in [`chat.proto`](internal/pb/chat.proto), using all four kinds of call: unary, server streaming, client streaming and bidirectional
 - **Live feed**: messages are pushed to watchers over Server-Sent Events (HTTP) or gRPC streams
 - **Content negotiation**: the same HTTP routes speak JSON or protobuf, chosen by the `Content-Type` and `Accept` headers
-- **Moderation**: a worker pool replaces messages containing banned words with `[removed]` in the live feed
+- **Moderation**: a worker pool replaces messages containing banned words with `[removed]` in the live feed. The words live in an editable [`banned_words.txt`](banned_words.txt)
 - **Safe under concurrency**: every shared structure is either locked or owned by a single goroutine, verified with Go's race detector
 - **Per-user rate limiting** and simple header-based authentication
 - **Graceful shutdown**: in-flight requests finish, streams close and queued messages are delivered before exit
@@ -73,6 +72,7 @@ flowchart LR
 ```
 chatserver/
 ├── go.mod
+├── banned_words.txt # the moderation list, one word per line
 ├── cmd/
 │   ├── server/      # the chat server: HTTP :8080, gRPC :9090, pprof :6060
 │   ├── client/      # a gRPC client for the terminal (all four kinds of call)
@@ -85,6 +85,7 @@ chatserver/
     ├── grpcapi/     # gRPC server: unary and streaming calls, interceptors
     ├── pb/          # chat.proto and the code protoc generated from it
     ├── pbconv/      # conversions from domain types to protobuf types
+    ├── moderation/  # the banned-word list: load, check, add, remove, save
     └── hub/         # live delivery: the hub and the moderation worker pool
 ```
 
@@ -104,7 +105,7 @@ Dependencies point inwards: `api` and `grpcapi` depend on `hub` and `store`, whi
 ### Run it
 
 ```bash
-git clone https://github.com/<Bazelle6726>/chatserver.git
+git clone https://github.com/Bazelle6726/chatserver.git
 cd chatserver
 go run ./cmd/server
 ```
@@ -262,6 +263,19 @@ es.addEventListener("message", e => console.log(JSON.parse(e.data)));
 
 ---
 
+## Moderation
+
+Messages in the live feed are checked against [`banned_words.txt`](banned_words.txt), which the server loads at startup from the folder it runs in.
+
+- **Format:** one word per line. Blank lines and lines starting with `#` are ignored.
+- **Matching:** whole words, ignoring case. With `scam` banned, "SCAM!" is caught but "scampi" isn't. So list every form you want caught: `scam`, `scammer`, `scamming`.
+- **Effect:** a matching message is shown as `[removed]` to watchers. The room history keeps the original, for moderators.
+- **Changes:** edit the file and restart the server. The `moderation.List` type also supports `Add` and `Remove` at runtime (safe for concurrent use) and `Save`, ready for admin endpoints.
+
+A word list won't catch deliberate misspellings like `f*ck` or `sh1t`. For broader coverage, start from an open-source list such as LDNOOBW.
+
+---
+
 ## gRPC API
 
 The service is defined in [`internal/pb/chat.proto`](internal/pb/chat.proto) and served on `localhost:9090`. The user ID travels as `x-user-id` call metadata; `CreateUser` and `GetUser` don't need it.
@@ -408,44 +422,3 @@ Under load, the profile shows most of the CPU going to network writes (~30%) and
 Profiling a benchmark of the room history showed that the original version spent ~97% of its time copying memory when the history was full. Replacing it with a **ring buffer** made adding a message 48× faster at 1,000 messages (2,135 ns → 44 ns), and the cost is now the same for any history size.
 
 ---
-
-## Design notes
-
-- **Errors are values.** The domain defines a few sentinel errors and one `ValidationError` type. A single function in each API maps them to HTTP status codes or gRPC codes, so every endpoint answers consistently.
-- **Two concurrency styles, each where it fits:**
-  - **Locks** for the store and rooms. Each `Room` has its own `sync.RWMutex`. Lowercase helper methods assume the lock is already held, which avoids the double-lock deadlock.
-  - **One owner goroutine** for the hub's watcher map. Others talk to it only through channels, so it needs no lock and messages keep their order.
-- **Never block on a slow client.** The hub sends to outboxes with `select`/`default`. A full outbox means that watcher is dropped, not that the room waits.
-- **Graceful shutdown order matters:**
-  1. The hub closes every outbox, which ends all streams.
-  2. The HTTP and gRPC servers drain. gRPC gets at most 5 seconds before it's forced to stop.
-  3. The worker pool stops last, so a late request can't send on a closed channel.
-- **The domain is independent.** `chat` and `store` know nothing about HTTP or gRPC, so both APIs share them, and a database could replace the in-memory `Store` without touching the APIs.
-
----
-
-## Limitations and ideas
-
-This is a learning project. It deliberately leaves out:
-
-- **Persistence.** Everything is in memory and lost on restart. A database could sit behind the `Store` interface.
-- **Real authentication.** `X-User-ID` trusts the client. Signed tokens would be the next step.
-- **Horizontal scaling.** The hub lives in one process. Several servers would need a shared message bus between them.
-- **Browser two-way chat.** Browsers get one-way SSE; two-way streaming is gRPC-only. WebSockets would add it.
-
-The profile also suggests the next optimisation: encode each message **once** rather than once per watcher, which would cut both network work and garbage-collector load.
-
----
-
-## How it was built
-
-The project was built in six stages. Each started as a skeleton of folders, failing tests and numbered TODOs, and was finished when `go test -race ./...` passed.
-
-| Stage | Topic | Added |
-|---|---|---|
-| 1 | Types, slices, maps, interfaces, testing | Domain model and in-memory store |
-| 2 | Errors, HTTP with Gin | REST API, auth and rate-limit middleware |
-| 3 | Concurrency | Locks, the hub, the worker pool, SSE, graceful shutdown |
-| 4 | gRPC and protobuf | `chat.proto`, gRPC server and client, all four call types |
-| 5 | Content negotiation | Protobuf over HTTP, shared conversion package, benchmarks |
-| 6 | Performance | pprof, load tester, ring buffer |
