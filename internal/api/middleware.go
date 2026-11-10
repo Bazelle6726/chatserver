@@ -13,12 +13,11 @@ import (
 // It's a function that RETURNS the middleware: a closure that captures s.
 func Auth(s store.Store) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		userID := c.GetHeader("X-User-ID") //header is read
-		if userID == "" {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "missing user ID"})
-			return
+		id := c.GetHeader("X-User-ID") //header is read
+		if id == "" {
+			id = c.Query("user") //fallback to query param
 		} //if it's empty, or s.GetUser can't find that user, the request is stopped
-		user, err := s.GetUser(chat.UserID(userID))
+		user, err := s.GetUser(chat.UserID(id))
 		if err != nil {
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "invalid user ID"})
 			return

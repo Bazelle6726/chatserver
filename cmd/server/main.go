@@ -6,8 +6,10 @@
 package main
 
 import (
+	"chatserver/web"
 	"context"
 	"errors"
+	"io/fs"
 	"log"
 	"net"
 	"net/http"
@@ -61,7 +63,21 @@ func main() {
 	pool.Start(runtime.NumCPU())
 
 	// HTTP (stages 2-3)
-	a := api.New(s, 20).WithHub(h, pool.Submit)
+	adminToken := os.Getenv("CHAT_ADMIN_TOKEN")
+	if adminToken == "" {
+		log.Println("admin API off (set CHAT_ADMIN_TOKEN to turn it on)")
+	}
+
+	// The browser app: the embedded web/dist, with "dist/" stripped so
+	// index.html is at the root.
+	app, err := fs.Sub(web.Dist, "dist")
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	a := api.New(s, 20).WithHub(h, pool.Submit).
+		WithModeration(words, "banned_words.txt", adminToken).
+		WithWeb(app)
 	srv := &http.Server{Addr: ":8080", Handler: a.Router()}
 	go func() {
 		log.Println("HTTP listening on http://localhost:8080")
@@ -123,4 +139,5 @@ func main() {
 	pool.Stop()
 
 	log.Printf("bye (dropped %d slow clients)", h.Dropped())
+
 }

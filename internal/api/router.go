@@ -22,6 +22,16 @@ func (a *API) Router() *gin.Engine {
 	auth.GET("/rooms/:id/stream", a.stream)
 
 	// Pass the method itself (a.createUser), don't call it (a.createUser()).
+	if a.web != nil {
+		a.serveWeb(r)
+	}
+
+	if a.words != nil {
+		admin := r.Group("/admin", AdminOnly(a.adminToken))
+		admin.GET("/banned-words", a.listBannedWords)
+		admin.POST("/banned-words", a.addBannedWord)
+		admin.DELETE("/banned-words/:word", a.removeBannedWord)
+	}
 
 	return r
 }

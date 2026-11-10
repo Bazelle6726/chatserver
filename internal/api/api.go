@@ -5,11 +5,13 @@ package api
 
 import (
 	"errors"
+	"io/fs"
 
 	"github.com/gin-gonic/gin"
 
 	"chatserver/internal/chat"
 	"chatserver/internal/hub"
+	"chatserver/internal/moderation"
 	"chatserver/internal/store"
 )
 
@@ -22,6 +24,15 @@ type API struct {
 	// Stage 3: live delivery. Both are optional (nil in most tests).
 	hub     *hub.Hub             // who's watching which room
 	publish func(m chat.Message) // called after every new message
+
+	// Stage 7: the banned-word list and its admin API. Optional (nil = no
+	// /admin routes).
+	words      *moderation.List
+	wordsPath  string // where changes are saved ("" = don't save)
+	adminToken string // the X-Admin-Token admins must send ("" = admin API off)
+
+	// Stage 7: the browser app's files (nil = no web app).
+	web fs.FS
 }
 
 // New builds the API. perSec is the rate limit per user per second.
@@ -35,6 +46,25 @@ func New(s store.Store, perSec int) *API {
 func (a *API) WithHub(h *hub.Hub, publish func(chat.Message)) *API {
 	a.hub = h
 	a.publish = publish
+	return a
+}
+
+// WithModeration turns on the admin API for the banned-word list. Changes are
+// saved to path (unless it's ""), and every admin request must carry an
+// X-Admin-Token header equal to token. An empty token turns the admin API
+// off: its routes answer 404.
+func (a *API) WithModeration(words *moderation.List, path, token string) *API {
+	a.words = words
+	a.wordsPath = path
+	a.adminToken = token
+	return a
+}
+
+// WithWeb serves the browser app from fsys, which should hold index.html at
+// its root (in main: the contents of web/dist). Any GET that no API route
+// matches is looked up there.
+func (a *API) WithWeb(fsys fs.FS) *API {
+	a.web = fsys
 	return a
 }
 
