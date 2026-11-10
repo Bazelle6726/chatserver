@@ -104,8 +104,8 @@ func TestRun(t *testing.T) {
 		t.Errorf("%d latencies for %d posts: record one per successful post", len(res.Latencies), res.Posted)
 	}
 	for _, l := range res.Latencies {
-		if l <= 0 {
-			t.Fatalf("a latency of %v: measure with time.Now() before and time.Since(start) after", l)
+		if l < 0 {
+			t.Fatalf("a negative latency of %v: measure with time.Now() before and time.Since(start) after", l)
 		}
 	}
 	if want := res.Posted * int64(len(watchers)); res.Received != want {

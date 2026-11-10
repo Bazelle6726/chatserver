@@ -7,7 +7,9 @@ import (
 	"sync/atomic"
 	"time"
 
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/status"
 
 	"chatserver/internal/pb"
 )
@@ -150,7 +152,7 @@ func post(ctx context.Context, client pb.ChatServiceClient, user, room string, r
 			Text:   fmt.Sprintf("load %s #%d", user, n),
 		})
 		if err != nil {
-			if ctx.Err() != nil {
+			if ctx.Err() != nil || status.Code(err) == codes.DeadlineExceeded {
 				return res
 			}
 			res.failed++
