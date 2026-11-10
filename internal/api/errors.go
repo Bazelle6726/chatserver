@@ -19,10 +19,6 @@ func statusFor(err error) int {
 		return http.StatusBadRequest
 	case errors.Is(err, chat.ErrUserNotFound), errors.Is(err, chat.ErrRoomNotFound):
 		return http.StatusNotFound
-	case errors.Is(err, chat.ErrUserNotFound):
-		return http.StatusNotFound
-	case errors.Is(err, chat.ErrRoomNotFound):
-		return http.StatusNotFound
 	case errors.Is(err, chat.ErrAlreadyExists):
 		return http.StatusConflict
 	case errors.Is(err, chat.ErrNotMember):
