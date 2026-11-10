@@ -21,9 +21,9 @@ import (
 	"google.golang.org/grpc/reflection"
 
 	"chatserver/internal/api"
-	"chatserver/internal/chat"
 	"chatserver/internal/grpcapi"
 	"chatserver/internal/hub"
+	"chatserver/internal/moderation"
 	"chatserver/internal/pb"
 	"chatserver/internal/store"
 )
@@ -53,8 +53,11 @@ func main() {
 
 	// The moderation pool: workers filter banned words, then publish to the hub.
 	// mod.IsBanned is a "method value": a function bound to mod.
-	mod := chat.Admin{User: &chat.User{Name: "moderator", Role: chat.RoleAdmin}, BannedWords: []string{"spam", "scam"}}
-	pool := hub.NewPool(mod.IsBanned, h.Publish, 256)
+	words, err := moderation.Load("banned_words.txt")
+	if err != nil {
+		log.Fatal(err)
+	}
+	pool := hub.NewPool(words.IsBanned, h.Publish, 256)
 	pool.Start(runtime.NumCPU())
 
 	// HTTP (stages 2-3)
