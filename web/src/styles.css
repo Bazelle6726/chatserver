@@ -8,7 +8,7 @@
   :root {
     --bg: #11161c; --panel: #18202a; --ink: #e8edf2; --muted: #94a3b2;
     --line: #2a3542; --accent: #6f29ca; --accent-ink: #0b1116;
-    --mine: #082d4b; --bad: #ff7b6b; --removed: #6f7c89;
+    --mine: #082d4b; --bad: #ff7b6b; --removed: #6f7c89; --scrollbar: #1c2530;
   }
 }
 * { box-sizing: border-box; }
@@ -65,6 +65,9 @@ section { display: flex; flex-direction: column; min-height: 0; }
 details summary { cursor: pointer; color: var(--muted); font-size: 13px; }
 #words { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; }
 #wordList { margin: 4px 0 8px; }
+::-webkit-scrollbar { width: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--line); border-radius: 999px; border: 2px solid var(--panel); }
 .chip { display: inline-flex; align-items: center; gap: 4px; padding: 2px 4px 2px 9px;
         border: 1px solid var(--line); border-radius: 999px; font-size: 13px; }
 .chip button { padding: 0 6px; background: transparent; color: var(--muted); font-weight: 400; }
