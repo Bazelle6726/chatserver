@@ -8,6 +8,8 @@ import (
 
 	"crypto/subtle"
 
+	"chatserver/internal/chat"
+
 	"github.com/gin-gonic/gin"
 )
 
@@ -93,4 +95,19 @@ func (a *API) saveWords() error {
 		return nil
 	}
 	return a.words.Save(a.wordsPath)
+}
+
+// hideBanned returns messages as users should see them: any message with a
+// banned word shows as "[removed]", the same as in the live feed. It changes
+// only this copy; the store keeps the originals.
+func (a *API) hideBanned(ms []chat.Message) []chat.Message {
+	if a.words == nil {
+		return ms
+	}
+	for i := range ms {
+		if a.words.IsBanned(ms[i].Text) {
+			ms[i].Text = "[removed]"
+		}
+	}
+	return ms
 }

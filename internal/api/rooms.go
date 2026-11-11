@@ -111,5 +111,6 @@ func (a *API) history(c *gin.Context) {
 		return
 	}
 	messages := room.LastN(limit)
-	respond(c, http.StatusOK, toMessageDTOs(messages), &pb.HistoryResponse{Messages: pbconv.Messages(messages)})
+	ms := a.hideBanned(messages)
+	respond(c, http.StatusOK, toMessageDTOs(ms), &pb.HistoryResponse{Messages: pbconv.Messages(ms)})
 }

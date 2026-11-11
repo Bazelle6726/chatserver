@@ -7,8 +7,8 @@
 @media (prefers-color-scheme: dark) {
   :root {
     --bg: #11161c; --panel: #18202a; --ink: #e8edf2; --muted: #94a3b2;
-    --line: #2a3542; --accent: #00add8; --accent-ink: #0b1116;
-    --mine: #12303a; --bad: #ff7b6b; --removed: #6f7c89;
+    --line: #2a3542; --accent: #6f29ca; --accent-ink: #0b1116;
+    --mine: #082d4b; --bad: #ff7b6b; --removed: #6f7c89;
   }
 }
 * { box-sizing: border-box; }
@@ -33,6 +33,16 @@ button { padding: 7px 12px; border: 0; border-radius: 7px; background: var(--acc
 button.ghost { background: transparent; color: var(--muted); border: 1px solid var(--line); font-weight: 400; }
 .row { display: flex; gap: 6px; }
 .row input { flex: 1; min-width: 0; }
+#admin > summary {
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+}
+#admin .row { margin-top: 6px; }
+#admin .row button { min-width: 64px; }
+#wordList { margin: 6px 0 0; }
+#words { max-height: 180px; overflow-y: auto; }
 #me { font-size: 14px; }
 #me b { color: var(--accent); }
 #rooms { list-style: none; margin: 0; padding: 0; }
