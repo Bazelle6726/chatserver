@@ -29,7 +29,7 @@ func toStatus(err error) error {
 		return status.Error(codes.NotFound, err.Error())
 	case errors.Is(err, chat.ErrAlreadyExists):
 		return status.Error(codes.AlreadyExists, err.Error())
-	case errors.Is(err, chat.ErrNotMember):
+	case errors.Is(err, chat.ErrNotMember), errors.Is(err, service.ErrPrivateRoom):
 		return status.Error(codes.PermissionDenied, err.Error())
 	case errors.Is(err, service.ErrUnauthenticated), errors.Is(err, service.ErrBadCredentials):
 		return status.Error(codes.Unauthenticated, err.Error())

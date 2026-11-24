@@ -59,6 +59,7 @@ message Room {
   string id = 1;
   string name = 2;
   int32 members = 3;
+  bool private = 4; // a match room: only players the game adds can join
 }
 
 message Message {

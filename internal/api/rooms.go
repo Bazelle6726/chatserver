@@ -41,7 +41,7 @@ func (a *API) createRoom(c *gin.Context) {
 
 // GET /rooms (logged in)
 func (a *API) listRooms(c *gin.Context) {
-	rooms, err := a.svc.ListRooms(c.Request.Context())
+	rooms, err := a.svc.ListRooms(c.Request.Context(), currentUser(c).ID)
 	if err != nil {
 		writeError(c, err)
 		return

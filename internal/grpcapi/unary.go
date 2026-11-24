@@ -53,7 +53,7 @@ func (s *Server) CreateRoom(ctx context.Context, req *pb.CreateRoomRequest) (*pb
 }
 
 func (s *Server) ListRooms(ctx context.Context, req *pb.ListRoomsRequest) (*pb.ListRoomsResponse, error) {
-	rooms, err := s.svc.ListRooms(ctx)
+	rooms, err := s.svc.ListRooms(ctx, currentUser(ctx).ID)
 	if err != nil {
 		return nil, toStatus(err)
 	}

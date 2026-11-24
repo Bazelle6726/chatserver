@@ -17,7 +17,7 @@ import (
 func TestHistoryHidesBannedWords(t *testing.T) {
 	s := store.NewMemoryStore()
 	u, _ := s.CreateUser(t.Context(), "alice", nil)
-	r, _ := s.CreateRoom(t.Context(), "general", 10)
+	r, _ := s.CreateRoom(t.Context(), "general", 10, false)
 	if err := r.Join(u.ID); err != nil {
 		t.Fatal(err)
 	}

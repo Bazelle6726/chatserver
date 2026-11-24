@@ -104,7 +104,7 @@ func (e *env) id(token string) string {
 // room creates a room with the users (tokens from e.user) as members.
 func (e *env) room(name string, members ...string) string {
 	e.t.Helper()
-	r, err := e.store.CreateRoom(e.t.Context(), name, 100)
+	r, err := e.store.CreateRoom(e.t.Context(), name, 100, false)
 	if err != nil {
 		e.t.Fatal(err)
 	}

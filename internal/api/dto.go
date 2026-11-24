@@ -21,6 +21,7 @@ type roomDTO struct {
 	ID      string `json:"id"`
 	Name    string `json:"name"`
 	Members int    `json:"members"`
+	Private bool   `json:"private"`
 }
 
 type messageDTO struct {
@@ -38,7 +39,7 @@ func toUserDTO(u *chat.User) userDTO {
 }
 
 func toRoomDTO(r *chat.Room) roomDTO {
-	return roomDTO{ID: string(r.ID), Name: r.Name, Members: r.MemberCount()}
+	return roomDTO{ID: string(r.ID), Name: r.Name, Members: r.MemberCount(), Private: r.Private}
 }
 
 // toMessageDTO converts a domain message into its JSON shape.

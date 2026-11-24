@@ -33,7 +33,7 @@ func statusFor(err error) int {
 		return http.StatusNotFound
 	case errors.Is(err, chat.ErrAlreadyExists):
 		return http.StatusConflict
-	case errors.Is(err, chat.ErrNotMember):
+	case errors.Is(err, chat.ErrNotMember), errors.Is(err, service.ErrPrivateRoom):
 		return http.StatusForbidden
 	case errors.Is(err, service.ErrUnauthenticated), errors.Is(err, service.ErrBadCredentials):
 		return http.StatusUnauthorized

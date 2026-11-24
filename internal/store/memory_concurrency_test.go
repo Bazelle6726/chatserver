@@ -58,7 +58,7 @@ func TestStoreConcurrentAccess(t *testing.T) {
 					t.Errorf("CreateUser: %v", err)
 					return
 				}
-				r, err := s.CreateRoom(t.Context(), fmt.Sprintf("room%d", i), 10)
+				r, err := s.CreateRoom(t.Context(), fmt.Sprintf("room%d", i), 10, false)
 				if err != nil {
 					t.Errorf("CreateRoom: %v", err)
 					return

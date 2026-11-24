@@ -22,8 +22,9 @@ type Store interface {
 	UserByName(ctx context.Context, name string) (*chat.User, error)
 	PasswordHash(ctx context.Context, id chat.UserID) ([]byte, error)
 
-	CreateRoom(ctx context.Context, name string, maxHistory int) (*chat.Room, error)
+	CreateRoom(ctx context.Context, name string, maxHistory int, private bool) (*chat.Room, error)
 	GetRoom(ctx context.Context, id chat.RoomID) (*chat.Room, error)
+	RoomByName(ctx context.Context, name string) (*chat.Room, error)
 	ListRooms(ctx context.Context) ([]*chat.Room, error)
 
 	PostMessage(ctx context.Context, room chat.RoomID, author chat.UserID, text string) (chat.Message, error)

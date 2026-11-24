@@ -210,6 +210,7 @@ type Room struct {
 	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
 	Name          string                 `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
 	Members       int32                  `protobuf:"varint,3,opt,name=members,proto3" json:"members,omitempty"`
+	Private       bool                   `protobuf:"varint,4,opt,name=private,proto3" json:"private,omitempty"` // a match room: only players the game adds can join
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -263,6 +264,13 @@ func (x *Room) GetMembers() int32 {
 		return x.Members
 	}
 	return 0
+}
+
+func (x *Room) GetPrivate() bool {
+	if x != nil {
+		return x.Private
+	}
+	return false
 }
 
 type Message struct {
@@ -1171,11 +1179,12 @@ const file_internal_pb_chat_proto_rawDesc = "" +
 	"\x04User\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12!\n" +
-	"\x04role\x18\x03 \x01(\x0e2\r.chat.v1.RoleR\x04role\"D\n" +
+	"\x04role\x18\x03 \x01(\x0e2\r.chat.v1.RoleR\x04role\"^\n" +
 	"\x04Room\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12\x18\n" +
-	"\amembers\x18\x03 \x01(\x05R\amembers\"\xe1\x01\n" +
+	"\amembers\x18\x03 \x01(\x05R\amembers\x12\x18\n" +
+	"\aprivate\x18\x04 \x01(\bR\aprivate\"\xe1\x01\n" +
 	"\aMessage\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x17\n" +
 	"\aroom_id\x18\x02 \x01(\tR\x06roomId\x12\x1b\n" +

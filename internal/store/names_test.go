@@ -25,10 +25,10 @@ func TestLookalikeNamesAreTaken(t *testing.T) {
 		}
 	}
 
-	if _, err := s.CreateRoom(t.Context(), "general", 10); err != nil {
+	if _, err := s.CreateRoom(t.Context(), "general", 10, false); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.CreateRoom(t.Context(), "General", 10); !errors.Is(err, chat.ErrAlreadyExists) {
+	if _, err := s.CreateRoom(t.Context(), "General", 10, false); !errors.Is(err, chat.ErrAlreadyExists) {
 		t.Errorf("CreateRoom(%q) = %v, want ErrAlreadyExists", "General", err)
 	}
 	if _, err := s.CreateUser(t.Context(), "alicia", nil); err != nil {

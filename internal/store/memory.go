@@ -136,8 +136,9 @@ func (s *MemoryStore) GetUser(ctx context.Context, id chat.UserID) (*chat.User, 
 	return nil, fmt.Errorf("user %q: %w", id, chat.ErrUserNotFound)
 }
 
-// Same rules as CreateUser, but for rooms. Use chat.NewRoom.
-func (s *MemoryStore) CreateRoom(ctx context.Context, name string, maxHistory int) (*chat.Room, error) {
+// Same rules as CreateUser, but for rooms. A private room can only be joined
+// by whoever the game adds to it (see package service).
+func (s *MemoryStore) CreateRoom(ctx context.Context, name string, maxHistory int, private bool) (*chat.Room, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -151,6 +152,7 @@ func (s *MemoryStore) CreateRoom(ctx context.Context, name string, maxHistory in
 		return nil, fmt.Errorf("room %q: %w", name, chat.ErrAlreadyExists)
 	}
 	room := chat.NewRoom(chat.RoomID(s.nextRoomID()), name, maxHistory)
+	room.Private = private // before anyone else can see the room
 	s.rooms[room.ID] = room
 	s.roomNames[key] = room.ID
 	return room, nil
@@ -167,6 +169,19 @@ func (s *MemoryStore) GetRoom(ctx context.Context, id chat.RoomID) (*chat.Room, 
 		return room, nil
 	}
 	return nil, fmt.Errorf("room %q: %w", id, chat.ErrRoomNotFound)
+}
+
+// RoomByName finds a room by name, matched by skeleton like uniqueness is.
+func (s *MemoryStore) RoomByName(ctx context.Context, name string) (*chat.Room, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if id, ok := s.roomNames[textnorm.Skeleton(name)]; ok {
+		return s.rooms[id], nil
+	}
+	return nil, fmt.Errorf("room %q: %w", name, chat.ErrRoomNotFound)
 }
 
 // ListRooms returns all rooms sorted by name.

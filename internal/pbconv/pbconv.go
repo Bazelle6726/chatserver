@@ -33,6 +33,7 @@ func Room(r *chat.Room) *pb.Room {
 		Id:      string(r.ID),
 		Name:    r.Name,
 		Members: int32(r.MemberCount()),
+		Private: r.Private,
 	}
 }
 

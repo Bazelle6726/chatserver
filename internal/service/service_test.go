@@ -233,3 +233,84 @@ func TestRegisterLoginLogout(t *testing.T) {
 		t.Errorf("Authenticate(\"\") = %v, want ErrUnauthenticated", err)
 	}
 }
+
+// A match room is private: only players the game adds can see, join, read
+// or watch it.
+func TestMatchRoom(t *testing.T) {
+	svc := newTest()
+	alice, eve, _ := setup(t, svc)
+	ctx := t.Context()
+
+	room, err := svc.MatchRoom(ctx, "match-1", 0, []chat.UserID{alice})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !room.Private || !room.IsMember(alice) || room.IsMember(eve) {
+		t.Fatalf("match room: private=%v alice=%v eve=%v; want private with only alice", room.Private, room.IsMember(alice), room.IsMember(eve))
+	}
+
+	// Eve can't get in by ID or by name, and can't see it in the list.
+	if err := svc.JoinRoom(ctx, eve, room.ID); !errors.Is(err, ErrPrivateRoom) {
+		t.Errorf("JoinRoom by an outsider = %v, want ErrPrivateRoom", err)
+	}
+	if _, err := svc.OpenRoom(ctx, eve, "match-1"); !errors.Is(err, ErrPrivateRoom) {
+		t.Errorf("OpenRoom by an outsider = %v, want ErrPrivateRoom", err)
+	}
+	for _, who := range []struct {
+		id   chat.UserID
+		sees bool
+	}{{alice, true}, {eve, false}} {
+		rooms, _ := svc.ListRooms(ctx, who.id)
+		found := false
+		for _, r := range rooms {
+			found = found || r.ID == room.ID
+		}
+		if found != who.sees {
+			t.Errorf("%s sees the match room in the list = %v, want %v", who.id, found, who.sees)
+		}
+	}
+
+	// Adding eve later works, and calling MatchRoom again is harmless.
+	if _, err := svc.MatchRoom(ctx, "match-1", 0, []chat.UserID{alice, eve}); err != nil {
+		t.Fatal(err)
+	}
+	if !room.IsMember(eve) {
+		t.Error("eve wasn't added")
+	}
+	if _, err := svc.OpenRoom(ctx, eve, "match-1"); err != nil {
+		t.Errorf("OpenRoom by a player the game added = %v, want nil", err)
+	}
+
+	// A public room can't be turned into a match room, and unknown players are refused.
+	if _, err := svc.MatchRoom(ctx, "general", 0, nil); !errors.Is(err, chat.ErrAlreadyExists) {
+		t.Errorf("MatchRoom over a public room = %v, want ErrAlreadyExists", err)
+	}
+	if _, err := svc.MatchRoom(ctx, "match-2", 0, []chat.UserID{"u-404"}); !errors.Is(err, chat.ErrUserNotFound) {
+		t.Errorf("MatchRoom with an unknown player = %v, want ErrUserNotFound", err)
+	}
+}
+
+// OpenRoom creates a public room if needed and joins it; doing it twice is fine.
+func TestOpenRoom(t *testing.T) {
+	svc := newTest()
+	alice, eve, _ := setup(t, svc)
+	ctx := t.Context()
+
+	lobby, err := svc.OpenRoom(ctx, alice, "lobby")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if lobby.Private || !lobby.IsMember(alice) {
+		t.Errorf("lobby: private=%v alice member=%v; want public with alice in it", lobby.Private, lobby.IsMember(alice))
+	}
+	again, err := svc.OpenRoom(ctx, eve, "LOBBY") // names match like uniqueness does
+	if err != nil || again.ID != lobby.ID || !lobby.IsMember(eve) {
+		t.Errorf("OpenRoom(LOBBY) = %v, %v; want the same lobby with eve in it", again, err)
+	}
+	if _, err := svc.OpenRoom(ctx, alice, "lobby"); err != nil {
+		t.Errorf("opening a room you're in = %v, want nil", err)
+	}
+	if _, err := svc.OpenRoom(ctx, alice, "x"); err == nil {
+		t.Error("OpenRoom with a bad name worked")
+	}
+}

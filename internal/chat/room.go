@@ -8,6 +8,7 @@ type Room struct {
 	mu         sync.RWMutex
 	ID         RoomID
 	Name       string
+	Private    bool                // set once when the room is made, never changed, so it needs no lock
 	members    map[UserID]struct{} // empty struct as a "set": uses no memory per value
 	history    []Message
 	start      int

@@ -19,6 +19,7 @@ package service
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"time"
 
@@ -49,6 +50,10 @@ var (
 	// the password was wrong, so it can't be used to find out who has an
 	// account.
 	ErrBadCredentials = errors.New("wrong name or password")
+
+	// ErrPrivateRoom means someone tried to join a private (match) room that
+	// the game didn't put them in.
+	ErrPrivateRoom = errors.New("this room is private: only the game can add players to it")
 
 	// ErrUnauthenticated means a request carried no session token, or one
 	// that's unknown, logged out or expired.
@@ -215,27 +220,108 @@ func (s *Service) GetUser(ctx context.Context, id chat.UserID) (*chat.User, erro
 // CreateRoom creates a room keeping up to maxHistory messages; 0 means
 // DefaultMaxHistory.
 func (s *Service) CreateRoom(ctx context.Context, name string, maxHistory int) (*chat.Room, error) {
+	return s.createRoom(ctx, name, maxHistory, false)
+}
+
+// createRoom checks maxHistory (0 = DefaultMaxHistory) and creates the room.
+func (s *Service) createRoom(ctx context.Context, name string, maxHistory int, private bool) (*chat.Room, error) {
 	if maxHistory == 0 {
 		maxHistory = DefaultMaxHistory
 	}
 	if maxHistory < 1 || maxHistory > MaxMaxHistory {
 		return nil, invalid("max_history", "must be 1-1000")
 	}
-	return s.store.CreateRoom(ctx, name, maxHistory)
+	return s.store.CreateRoom(ctx, name, maxHistory, private)
 }
 
-// ListRooms returns every room, sorted by name.
-func (s *Service) ListRooms(ctx context.Context) ([]*chat.Room, error) {
-	return s.store.ListRooms(ctx)
+// ListRooms returns the rooms user can see, sorted by name: every public
+// room, and the private rooms they're in. Other people's match rooms stay
+// hidden.
+func (s *Service) ListRooms(ctx context.Context, user chat.UserID) ([]*chat.Room, error) {
+	rooms, err := s.store.ListRooms(ctx)
+	if err != nil {
+		return nil, err
+	}
+	visible := make([]*chat.Room, 0, len(rooms))
+	for _, r := range rooms {
+		if !r.Private || r.IsMember(user) {
+			visible = append(visible, r)
+		}
+	}
+	return visible, nil
 }
 
-// JoinRoom makes user a member of the room.
+// JoinRoom makes user a member of the room. Private rooms can't be joined:
+// only the game puts players in them (MatchRoom).
 func (s *Service) JoinRoom(ctx context.Context, user chat.UserID, roomID chat.RoomID) error {
 	room, err := s.store.GetRoom(ctx, roomID)
 	if err != nil {
 		return err
 	}
+	return joinPublic(room, user)
+}
+
+// joinPublic joins user to room, refusing private rooms they're not in.
+func joinPublic(room *chat.Room, user chat.UserID) error {
+	if room.Private && !room.IsMember(user) {
+		return ErrPrivateRoom
+	}
 	return room.Join(user)
+}
+
+// OpenRoom is "take me to the room called name": it finds the room, creating
+// a public one if there's none, and makes sure user is a member. A private
+// room works only if the game already put user in it. A game client uses it
+// to enter a lobby or its match room by name, without knowing the room's ID.
+func (s *Service) OpenRoom(ctx context.Context, user chat.UserID, name string) (*chat.Room, error) {
+	room, err := s.findOrCreateRoom(ctx, name, 0, false)
+	if err != nil {
+		return nil, err
+	}
+	if err := joinPublic(room, user); err != nil && !errors.Is(err, chat.ErrAlreadyExists) {
+		return nil, err
+	}
+	return room, nil
+}
+
+// MatchRoom is for the game's backend: it finds the private room called
+// name, creating it if there's none, and adds players to it. Only players
+// the game adds can read or post in it. maxHistory applies only if the room
+// is created (0 = DefaultMaxHistory).
+func (s *Service) MatchRoom(ctx context.Context, name string, maxHistory int, players []chat.UserID) (*chat.Room, error) {
+	room, err := s.findOrCreateRoom(ctx, name, maxHistory, true)
+	if err != nil {
+		return nil, err
+	}
+	if !room.Private {
+		return nil, fmt.Errorf("room %q is public, so it can't be a match room: %w", name, chat.ErrAlreadyExists)
+	}
+	for _, p := range players {
+		if _, err := s.store.GetUser(ctx, p); err != nil {
+			return nil, err
+		}
+		if err := room.Join(p); err != nil && !errors.Is(err, chat.ErrAlreadyExists) {
+			return nil, err
+		}
+	}
+	return room, nil
+}
+
+// findOrCreateRoom returns the room called name, creating it if there's none.
+func (s *Service) findOrCreateRoom(ctx context.Context, name string, maxHistory int, private bool) (*chat.Room, error) {
+	room, err := s.store.RoomByName(ctx, name)
+	if err == nil {
+		return room, nil
+	}
+	if !errors.Is(err, chat.ErrRoomNotFound) {
+		return nil, err
+	}
+	room, err = s.createRoom(ctx, name, maxHistory, private)
+	if errors.Is(err, chat.ErrAlreadyExists) {
+		// Someone created it between our lookup and our create: use theirs.
+		return s.store.RoomByName(ctx, name)
+	}
+	return room, err
 }
 
 // memberRoom looks a room up and checks user has joined it.
