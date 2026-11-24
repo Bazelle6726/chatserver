@@ -54,7 +54,7 @@ func (s *adminServer) do(method, path string, body any, token string) *httptest.
 	return rec
 }
 
-// TODO 75: AdminOnly
+// AdminOnly
 func TestAdminOnly(t *testing.T) {
 	off := newAdminServer(t, "")
 	expectStatus(t, off.do("GET", "/admin/banned-words", nil, "anything"), http.StatusNotFound, "admin API with no token configured")
@@ -69,7 +69,7 @@ func TestAdminOnly(t *testing.T) {
 	}
 }
 
-// TODO 76: list
+// Listing the words.
 func TestListBannedWords(t *testing.T) {
 	s := newAdminServer(t, "s3cret")
 	rec := s.do("GET", "/admin/banned-words", nil, "s3cret")
@@ -82,7 +82,7 @@ func TestListBannedWords(t *testing.T) {
 	}
 }
 
-// TODO 77: add
+// Adding a word.
 func TestAddBannedWord(t *testing.T) {
 	s := newAdminServer(t, "s3cret")
 
@@ -117,7 +117,7 @@ func TestAddBannedWord(t *testing.T) {
 	}
 }
 
-// TODO 78: remove
+// Removing a word.
 func TestRemoveBannedWord(t *testing.T) {
 	s := newAdminServer(t, "s3cret")
 	expectStatus(t, s.do("DELETE", "/admin/banned-words/SCAM", nil, "s3cret"), http.StatusNoContent, "remove SCAM")
@@ -134,7 +134,7 @@ func TestRemoveBannedWord(t *testing.T) {
 	expectStatus(t, s.do("DELETE", "/admin/banned-words/notthere", nil, "s3cret"), http.StatusNoContent, "remove a word that isn't banned")
 }
 
-// TODO 74: the routes exist only when moderation is configured.
+// The routes exist only when moderation is configured.
 func TestNoAdminRoutesWithoutModeration(t *testing.T) {
 	s := newServer(t) // plain API, no WithModeration
 	expectStatus(t, s.do("GET", "/admin/banned-words", nil, ""), http.StatusNotFound, "admin route on an API without moderation")

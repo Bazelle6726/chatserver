@@ -50,8 +50,6 @@ func AdminOnly(token string, failures *Limiter) gin.HandlerFunc {
 }
 
 // GET /admin/banned-words
-//
-// TODO(76): reply 200 with gin.H{"words": a.words.Words()}
 func (a *API) listBannedWords(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"words": a.words.Words()})
 }

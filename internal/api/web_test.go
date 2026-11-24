@@ -22,7 +22,7 @@ func newWebServer(t *testing.T) *testServer {
 	return &testServer{t: t, router: New(store.NewMemoryStore(), 1000).WithWeb(fakeApp).Router()}
 }
 
-// TODO 79: the app's files are served for paths no API route matches.
+// The app's files are served for paths no API route matches.
 func TestServesTheWebApp(t *testing.T) {
 	s := newWebServer(t)
 
@@ -49,12 +49,12 @@ func TestServesTheWebApp(t *testing.T) {
 	expectStatus(t, s.do("GET", "/rooms", nil, ""), http.StatusUnauthorized, "GET /rooms without a user still goes to the API")
 }
 
-// TODO 74: no web app configured, no files served.
+// No web app configured, no files served.
 func TestNoWebAppWithoutWithWeb(t *testing.T) {
 	expectStatus(t, newServer(t).do("GET", "/", nil, ""), http.StatusNotFound, "GET / on an API without WithWeb")
 }
 
-// TODO 80: Auth also accepts ?user=, because a browser's EventSource can't
+// Auth also accepts ?user=, because a browser's EventSource can't
 // send headers.
 func TestAuthAcceptsUserQuery(t *testing.T) {
 	s := newServer(t)

@@ -15,7 +15,7 @@ import (
 	"chatserver/internal/pb"
 )
 
-// --- TODOs 64-66: the three helpers, tested on their own -------------------
+// --- the three helpers, tested on their own ---------------------------------
 
 // testContext builds a Gin context for one request, without a router.
 func testContext(method, contentType, accept string, body []byte) (*gin.Context, *httptest.ResponseRecorder) {
@@ -133,7 +133,7 @@ func TestBindBody(t *testing.T) {
 	}
 }
 
-// --- TODOs 67-68: the handlers, through the router -------------------------
+// --- the handlers, through the router ----------------------------------------
 
 // doProto sends body as protobuf (nil = no body) and asks for protobuf back.
 func (s *testServer) doProto(method, path string, body proto.Message, user string) *httptest.ResponseRecorder {

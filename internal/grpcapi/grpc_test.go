@@ -74,7 +74,7 @@ func (e *env) as(user string) context.Context {
 	return ctx
 }
 
-// Setup straight through the store, so each test only depends on its own TODO.
+// Setup goes straight through the store, so each test only exercises its own call.
 func (e *env) user(name string) string {
 	e.t.Helper()
 	u, err := e.store.CreateUser(name)

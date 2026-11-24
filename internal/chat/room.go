@@ -1,9 +1,6 @@
 package chat
 
-import (
-	"maps"
-	"sync"
-)
+import "sync"
 
 // Room holds members and a capped message history.
 // mu protects members and history: many readers at once, or one writer.
@@ -11,7 +8,6 @@ type Room struct {
 	mu         sync.RWMutex
 	ID         RoomID
 	Name       string
-	Settings   map[string]string
 	members    map[UserID]struct{} // empty struct as a "set": uses no memory per value
 	history    []Message
 	start      int
@@ -20,15 +16,14 @@ type Room struct {
 
 // NewRoom creates a room that keeps at most maxHistory messages.
 //
-// Initialized BOTH maps with make() - writing to a nil map panics
-// (nil map rule). History has a capacity of maxHistory.
+// members is made with make(): writing to a nil map panics. history starts
+// empty and grows as messages arrive, so an empty room costs almost nothing
+// however large maxHistory is.
 func NewRoom(id RoomID, name string, maxHistory int) *Room {
 	return &Room{
 		ID:         id,
 		Name:       name,
-		Settings:   make(map[string]string),
 		members:    make(map[UserID]struct{}),
-		history:    make([]Message, 0, maxHistory),
 		maxHistory: maxHistory,
 	}
 }
@@ -89,7 +84,14 @@ func (r *Room) AddMessage(msg Message) error {
 		return ErrNotMember
 	}
 	if len(r.history) < r.maxHistory {
-		r.history = append(r.history, msg) // not full yet: just append
+		// Not full yet: append. Grow the backing array ourselves, doubling
+		// but never past maxHistory (plain append could overshoot it).
+		if len(r.history) == cap(r.history) {
+			grown := make([]Message, len(r.history), min(max(2*cap(r.history), 8), r.maxHistory))
+			copy(grown, r.history)
+			r.history = grown
+		}
+		r.history = append(r.history, msg)
 		return nil
 	}
 	r.history[r.start] = msg               // full: overwrite the oldest...
@@ -116,13 +118,4 @@ func (r *Room) LastN(n int) []Message {
 		out[i] = r.history[(r.start+size-n+i)%size] // read in order, wrapping round
 	}
 	return out
-}
-
-// SettingsCopy returns a copy of the settings so callers can't modify the room's map.
-//
-// maps.Clone returns a shallow copy
-func (r *Room) SettingsCopy() map[string]string {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	return maps.Clone(r.Settings)
 }

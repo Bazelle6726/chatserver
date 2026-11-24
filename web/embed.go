@@ -13,20 +13,13 @@ package web
 
 import "embed"
 
-// Dist will hold the built app: dist/index.html, dist/assets/...
+// Dist holds the built app: dist/index.html, dist/assets/...
 //
-// TODO(79, part 1): embed the dist folder. Put this comment directly above
-// the var, with no blank line in between:
-//
-//	//go:embed dist
-//
-// The compiler then fills Dist with every file under dist/, and they end up
-// inside the server's .exe. Two details:
+// The //go:embed line below makes the compiler fill Dist with every file
+// under dist/, so they end up inside the server's .exe. Two details:
 //   - no space after //: "// go:embed" is just a comment and does nothing
 //   - embed can only reach files in this folder or below it. That's why this
 //     small Go package lives here, next to dist/, and not in internal/api.
-//
-// Check: go test ./web
 //
 //go:embed dist
 var Dist embed.FS

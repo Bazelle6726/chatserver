@@ -45,7 +45,6 @@ func (s *Server) CreateRoom(ctx context.Context, req *pb.CreateRoomRequest) (*pb
 		return nil, toStatus(err)
 	}
 	return pbconv.Room(r), nil
-	//return nil, status.Error(codes.Unimplemented, "TODO(54): CreateRoom")
 }
 
 // Converts every room from s.store.ListRooms() into a []*pb.Room
@@ -57,7 +56,6 @@ func (s *Server) ListRooms(ctx context.Context, req *pb.ListRoomsRequest) (*pb.L
 		pbRooms[i] = pbconv.Room(r)
 	}
 	return &pb.ListRoomsResponse{Rooms: pbRooms}, nil
-	//return nil, status.Error(codes.Unimplemented, "TODO(55): ListRooms")
 }
 
 // get the room, then room.Join(currentUser(ctx).ID).
@@ -72,7 +70,6 @@ func (s *Server) JoinRoom(ctx context.Context, req *pb.JoinRoomRequest) (*pb.Joi
 		return nil, toStatus(err)
 	}
 	return &pb.JoinRoomResponse{}, nil //return &pb.JoinRoomResponse{}, nil
-	//return nil, status.Error(codes.Unimplemented, "TODO(56): JoinRoom")
 }
 
 // Uses s.post (from server.go): stores the message AND publishes
@@ -84,7 +81,6 @@ func (s *Server) PostMessage(ctx context.Context, req *pb.PostMessageRequest) (*
 		return nil, toStatus(err)
 	}
 	return pbconv.Message(msg), nil
-	//return nil, status.Error(codes.Unimplemented, "TODO(57): PostMessage")
 }
 
 func (s *Server) History(ctx context.Context, req *pb.HistoryRequest) (*pb.HistoryResponse, error) {

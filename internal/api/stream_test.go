@@ -16,7 +16,7 @@ import (
 	"chatserver/internal/store"
 )
 
-// TODO 46: postMessage must hand every stored message to a.publish.
+// postMessage must hand every stored message to a.publish.
 func TestPostPublishes(t *testing.T) {
 	got := make(chan chat.Message, 1)
 	a := New(store.NewMemoryStore(), 1000).WithHub(nil, func(m chat.Message) { got <- m })
@@ -33,7 +33,7 @@ func TestPostPublishes(t *testing.T) {
 			t.Errorf("published %+v", m)
 		}
 	case <-time.After(time.Second):
-		t.Fatal("postMessage didn't call a.publish (TODO 46)")
+		t.Fatal("postMessage didn't call a.publish")
 	}
 
 	// A failed post must NOT be published.
@@ -46,7 +46,6 @@ func TestPostPublishes(t *testing.T) {
 }
 
 // The full live path: POST -> pool (filters banned words) -> hub -> SSE stream.
-// Needs TODOs 39-47.
 func TestLiveStream(t *testing.T) {
 	st := store.NewMemoryStore()
 	h := hub.NewHub(16)
@@ -78,7 +77,7 @@ func TestLiveStream(t *testing.T) {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("stream status %d, want 200 (is the route registered? TODO 47)", resp.StatusCode)
+		t.Fatalf("stream status %d, want 200", resp.StatusCode)
 	}
 	lines := bufio.NewReader(resp.Body)
 	if first, _ := lines.ReadString('\n'); !strings.HasPrefix(first, ": connected") {

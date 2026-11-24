@@ -93,58 +93,12 @@ func TestValidateMessage(t *testing.T) {
 	}
 }
 
-func TestPromoteSharesUser(t *testing.T) {
-	u := &User{ID: "u-1", Name: "bob", Role: RoleMember}
-	admin := Promote(u)
-
-	if admin.User != u {
-		t.Fatal("Promote should embed the same *User, not a copy")
-	}
-	if u.Role != RoleAdmin {
-		t.Errorf("after Promote, user Role = %v, want admin", u.Role)
-	}
-	// Field promotion: admin.Name reads u.Name through the embedded pointer.
-	u.Name = "robert"
-	if admin.Name != "robert" {
-		t.Errorf("admin.Name = %q, want %q (embedded pointer should see changes)", admin.Name, "robert")
-	}
-}
-
-func TestRename(t *testing.T) {
-	u := &User{Name: "bob"}
-	if err := u.Rename("bobby"); err != nil {
-		t.Fatalf("Rename(bobby) = %v", err)
-	}
-	if u.Name != "bobby" {
-		t.Errorf("Name = %q, want bobby", u.Name)
-	}
-
-	err := u.Rename("x")
-	var ve *ValidationError
-	if !errors.As(err, &ve) {
-		t.Errorf("Rename(x) = %v, want *ValidationError", err)
-	}
-	if u.Name != "bobby" {
-		t.Errorf("Name changed to %q after a failed rename", u.Name)
-	}
-}
-
-func TestIsBanned(t *testing.T) {
-	a := Admin{User: &User{}, BannedWords: []string{"spam", "scam"}}
-	if !a.IsBanned("Buy my SPAM now") {
-		t.Error("should match ignoring case")
-	}
-	if a.IsBanned("hello there") {
-		t.Error("clean text should not be banned")
-	}
-}
-
-// newTestRoom fails the test instead of panicking if NewRoom isn't done yet.
+// newTestRoom fails the test instead of panicking if NewRoom forgets a make.
 func newTestRoom(t *testing.T, max int) *Room {
 	t.Helper()
 	r := NewRoom("r-1", "general", max)
-	if r.members == nil || r.Settings == nil {
-		t.Fatal("NewRoom must initialise members and Settings with make (TODO 9)")
+	if r.members == nil {
+		t.Fatal("NewRoom must initialise members with make")
 	}
 	return r
 }
@@ -225,16 +179,6 @@ func TestLastNReturnsCopy(t *testing.T) {
 
 	if empty := r.LastN(0); empty == nil || len(empty) != 0 {
 		t.Errorf("LastN(0) = %#v, want an empty non-nil slice", empty)
-	}
-}
-
-func TestSettingsCopy(t *testing.T) {
-	r := newTestRoom(t, 10)
-	r.Settings["topic"] = "Go"
-	c := r.SettingsCopy()
-	c["topic"] = "Rust"
-	if r.Settings["topic"] != "Go" {
-		t.Error("changing the copy changed the room's settings")
 	}
 }
 

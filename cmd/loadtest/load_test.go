@@ -59,7 +59,7 @@ func users(t *testing.T, s *store.MemoryStore, prefix string, n int) []string {
 	return ids
 }
 
-// TODOs 71 and 72: a short, gentle load where nothing should be lost.
+// A short, gentle load where nothing should be lost.
 func TestRun(t *testing.T) {
 	client, s := startServer(t)
 	posters := users(t, s, "poster", 2)
