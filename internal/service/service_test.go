@@ -8,6 +8,7 @@ import (
 	"chatserver/internal/chat"
 	"chatserver/internal/hub"
 	"chatserver/internal/moderation"
+	"chatserver/internal/ratelimit"
 	"chatserver/internal/store"
 )
 
@@ -147,5 +148,30 @@ func TestWatch(t *testing.T) {
 		t.Errorf("JoinAndWatch by a member = %v, want nil", err)
 	} else {
 		leave2()
+	}
+}
+
+// The post limit applies per user, however the message is sent.
+func TestPostLimit(t *testing.T) {
+	svc := New(store.NewMemoryStore()).WithPostLimit(ratelimit.New(1, 3)) // bursts of 3
+	alice, eve, room := setup(t, svc)
+	ctx := t.Context()
+	if err := svc.JoinRoom(ctx, eve, room); err != nil {
+		t.Fatal(err)
+	}
+	for i := range 3 {
+		if _, err := svc.PostMessage(ctx, alice, room, "hi"); err != nil {
+			t.Fatalf("post %d: %v", i+1, err)
+		}
+	}
+	if _, err := svc.PostMessage(ctx, alice, room, "hi"); !errors.Is(err, ratelimit.ErrLimited) {
+		t.Errorf("4th post in a burst of 3 = %v, want ErrLimited", err)
+	}
+	if _, err := svc.PostMessage(ctx, eve, room, "hi"); err != nil {
+		t.Errorf("eve has a separate limit, but got %v", err)
+	}
+	ms, _ := svc.History(ctx, alice, room, 0)
+	if len(ms) != 4 {
+		t.Errorf("history has %d messages, want 4: a refused post must not be stored", len(ms))
 	}
 }

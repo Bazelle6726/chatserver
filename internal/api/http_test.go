@@ -11,6 +11,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"chatserver/internal/ratelimit"
 	"chatserver/internal/service"
 	"chatserver/internal/store"
 )
@@ -32,7 +33,7 @@ type testServer struct {
 func newServer(t *testing.T) *testServer {
 	t.Helper()
 	// A high limit so the rate limiter never gets in the way of these tests.
-	return &testServer{t: t, router: New(service.New(store.NewMemoryStore()), 1000).Router()}
+	return &testServer{t: t, router: New(service.New(store.NewMemoryStore()), ratelimit.Limits{}).Router()}
 }
 
 // do sends a request. body may be nil; user "" means no X-User-ID header.
@@ -228,7 +229,7 @@ func TestHistory(t *testing.T) {
 
 func TestRateLimitMiddleware(t *testing.T) {
 	st := store.NewMemoryStore()
-	router := New(service.New(st), 2).Router() // only 2 requests per second
+	router := New(service.New(st), ratelimit.Limits{PerUser: ratelimit.New(2, 2)}).Router() // 2 a second, bursts of 2
 	s := &testServer{t: t, router: router}
 	u := s.mustUser("alice")
 

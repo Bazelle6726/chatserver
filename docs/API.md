@@ -90,7 +90,12 @@ All routes except the two user routes need an existing user's ID, in the `X-User
 - **Body size**: at most 64 KiB, then `413`.
 - **`max_history`**: 1 to 1000; omitted or 0 means 100.
 - **`limit`**: 1 to 500, default 50.
-- **Rate limit**: 20 requests per second per user on user routes, then `429`.
+- **Rate limits**, all token buckets (an average rate, with short bursts allowed), answered with `429`:
+  - 20 requests a second per logged-in user (bursts of 40)
+  - 20 posted messages a second per user (bursts of 40), counted the same over HTTP and gRPC, including messages inside `Import` and `Converse` streams
+  - 10 requests a second per IP address on routes without a login (bursts of 30)
+  - 10 new accounts a minute per IP address
+  - Start the server with `-requests-per-second`, `-posts-per-second` or `-signups-per-minute` to change them; 0 turns one off.
 
 ### Response shapes
 
@@ -122,7 +127,7 @@ Errors are always JSON. Validation errors also name the field:
 | `404` | unknown user, room or path, or the admin API is off |
 | `409` | name already taken (or one that looks the same), or already a member |
 | `413` | request body over 64 KiB |
-| `429` | rate limit exceeded, or too many wrong admin tokens |
+| `429` | a rate limit exceeded, or too many wrong admin tokens |
 | `500` | anything unexpected; the body is just `{"error": "internal error"}` and the details go to the server log |
 
 ## Live feed (SSE)
@@ -167,7 +172,7 @@ A word list still won't catch everything: a word split differently (`sc am`) or 
 
 The admin API is **off unless `CHAT_ADMIN_TOKEN` is set** to at least 16 characters when the server starts; while it's off, its routes answer `404`. Each request sends the token in the `X-Admin-Token` header.
 
-After **5 wrong tokens in a minute** from one IP address, that address gets `429` until the minute is up, even with the right token. The server uses the connection's real address and ignores `X-Forwarded-For`, so a client can't dodge the lockout by claiming a new IP. Behind a reverse proxy, add the proxy's address to `SetTrustedProxies` in [`router.go`](../internal/api/router.go).
+After **5 wrong tokens** from one IP address, that address gets `429`, even with the right token, and earns one more try every 12 seconds (5 a minute). The server uses the connection's real address and ignores `X-Forwarded-For`, so a client can't dodge the lockout by claiming a new IP. Behind a reverse proxy, add the proxy's address to `SetTrustedProxies` in [`router.go`](../internal/api/router.go).
 
 ```bash
 TOKEN=pick-a-long-secret
@@ -208,7 +213,7 @@ Defined in [`internal/pb/chat.proto`](../internal/pb/chat.proto) and served on `
 | `Import` | client streaming | send many messages, get one summary |
 | `Converse` | bidirectional | post and receive on one call; the first message names the room |
 
-Errors come back as gRPC status codes that match the HTTP ones: `InvalidArgument`, `Unauthenticated`, `PermissionDenied`, `NotFound`, `AlreadyExists`, `Internal`. As over HTTP, `History` and `Watch` need you to have joined the room (else `PermissionDenied`), and an `Internal` error's message is just "internal error". `Converse` joins you to the room named in its first message, if you aren't a member yet.
+Errors come back as gRPC status codes that match the HTTP ones: `InvalidArgument`, `Unauthenticated`, `PermissionDenied`, `NotFound`, `AlreadyExists`, `ResourceExhausted` (a rate limit, the same ones as over HTTP), `Internal`. As over HTTP, `History` and `Watch` need you to have joined the room (else `PermissionDenied`), and an `Internal` error's message is just "internal error". `Converse` joins you to the room named in its first message, if you aren't a member yet.
 
 ### The terminal client
 

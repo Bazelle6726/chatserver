@@ -11,6 +11,7 @@ import (
 	"chatserver/web"
 	"context"
 	"errors"
+	"flag"
 	"io/fs"
 	"log"
 	"net"
@@ -29,6 +30,7 @@ import (
 	"chatserver/internal/hub"
 	"chatserver/internal/moderation"
 	"chatserver/internal/pb"
+	"chatserver/internal/ratelimit"
 	"chatserver/internal/service"
 	"chatserver/internal/store"
 )
@@ -37,6 +39,12 @@ import (
 const minAdminTokenLen = 16
 
 func main() {
+	// Rate limits. 0 turns a limit off, e.g. for the load tester.
+	requestsPerSecond := flag.Float64("requests-per-second", 20, "requests per logged-in user per second (0 = no limit)")
+	postsPerSecond := flag.Float64("posts-per-second", 20, "messages each user may post per second (0 = no limit)")
+	signUpsPerMinute := flag.Int("signups-per-minute", 10, "new accounts per IP per minute (0 = no limit)")
+	flag.Parse()
+
 	// ctx is cancelled when you press Ctrl+C. Everything long-running watches it.
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
@@ -86,8 +94,17 @@ func main() {
 		log.Fatal(err)
 	}
 
-	svc := service.New(s).WithHub(h, pool.Submit).WithModeration(words.IsBanned)
-	a := api.New(svc, 20).
+	// Rate limits, shared by both front doors so neither is a way round them.
+	// Token buckets: N a second on average, in bursts of up to M.
+	limits := ratelimit.Limits{
+		PerUser: ratelimit.New(*requestsPerSecond, int(2**requestsPerSecond)),                            // requests per logged-in user
+		PerIP:   ratelimit.New(10, 30),                                                                   // requests without a login, per IP
+		SignUps: ratelimit.New(ratelimit.Per(*signUpsPerMinute, time.Minute), max(*signUpsPerMinute, 1)), // new accounts per IP
+	}
+	posts := ratelimit.New(*postsPerSecond, int(2**postsPerSecond)) // messages per user, over HTTP and gRPC alike
+
+	svc := service.New(s).WithHub(h, pool.Submit).WithModeration(words.IsBanned).WithPostLimit(posts)
+	a := api.New(svc, limits).
 		WithModeration(words, "banned_words.txt", adminToken).
 		WithWeb(app)
 	srv := &http.Server{
@@ -114,8 +131,8 @@ func main() {
 		log.Fatal(err)
 	}
 	gs := grpc.NewServer(
-		grpc.UnaryInterceptor(grpcapi.UnaryAuth(svc)),
-		grpc.StreamInterceptor(grpcapi.StreamAuth(svc)),
+		grpc.UnaryInterceptor(grpcapi.UnaryAuth(svc, limits)),
+		grpc.StreamInterceptor(grpcapi.StreamAuth(svc, limits)),
 		// The default is 4 MiB per message; no request here needs more than a
 		// few KB, so match the HTTP body cap.
 		grpc.MaxRecvMsgSize(api.MaxBodyBytes),

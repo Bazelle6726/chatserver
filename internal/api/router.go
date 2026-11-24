@@ -1,6 +1,10 @@
 package api
 
-import "github.com/gin-gonic/gin"
+import (
+	"github.com/gin-gonic/gin"
+
+	"chatserver/internal/ratelimit"
+)
 
 // Router builds the Gin engine with every route and middleware.
 //
@@ -10,17 +14,22 @@ func (a *API) Router() *gin.Engine {
 	r := gin.New()
 	// Trust no proxies: c.ClientIP() is then the real peer address. By default
 	// Gin believes any X-Forwarded-For header, so a client could claim a new
-	// IP on every request and dodge the per-IP admin lockout. Behind a real
-	// reverse proxy, list its address here instead.
+	// IP on every request and dodge the per-IP limits. Behind a real reverse
+	// proxy, list its address here instead.
 	if err := r.SetTrustedProxies(nil); err != nil {
 		panic(err) // can't happen with nil
 	}
 	r.Use(gin.Recovery(), gin.Logger(), LimitBody(MaxBodyBytes))
-	//Public (anyone can call these):
-	r.POST("/users", a.createUser)
-	r.GET("/users/:id", a.getUser)
-	// and registered on authed instead of r:
-	auth := r.Group("/", Auth(a.svc), RateLimit(a.limiter))
+
+	// Public: anyone can call these, so they're limited per IP address.
+	// Creating an account has a stricter limit of its own on top.
+	public := r.Group("/", LimitByIP(a.limits.PerIP))
+	public.POST("/users", LimitByIP(a.limits.SignUps), a.createUser)
+	public.GET("/users/:id", a.getUser)
+
+	// Logged in: limited per user. RateLimit must come after Auth, which
+	// says who the user is.
+	auth := r.Group("/", Auth(a.svc), RateLimit(a.limits.PerUser))
 	auth.POST("/rooms", a.createRoom)
 	auth.GET("/rooms", a.listRooms)
 	auth.POST("/rooms/:id/members", a.joinRoom)
@@ -34,7 +43,7 @@ func (a *API) Router() *gin.Engine {
 	}
 
 	if a.words != nil {
-		failures := NewLimiterPer(adminMaxFailures, adminFailureWindow, nil)
+		failures := ratelimit.New(ratelimit.Per(adminMaxFailures, adminFailureWindow), adminMaxFailures)
 		admin := r.Group("/admin", AdminOnly(a.adminToken, failures))
 		admin.GET("/banned-words", a.listBannedWords)
 		admin.POST("/banned-words", a.addBannedWord)

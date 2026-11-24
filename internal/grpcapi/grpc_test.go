@@ -19,6 +19,7 @@ import (
 	"chatserver/internal/chat"
 	"chatserver/internal/hub"
 	"chatserver/internal/pb"
+	"chatserver/internal/ratelimit"
 	"chatserver/internal/service"
 	"chatserver/internal/store"
 )
@@ -45,7 +46,7 @@ func newEnv(t *testing.T) *env {
 		e.hub.Publish(m)
 	}
 	svc := service.New(e.store).WithHub(e.hub, publish)
-	gs := grpc.NewServer(grpc.UnaryInterceptor(UnaryAuth(svc)), grpc.StreamInterceptor(StreamAuth(svc)))
+	gs := grpc.NewServer(grpc.UnaryInterceptor(UnaryAuth(svc, ratelimit.Limits{})), grpc.StreamInterceptor(StreamAuth(svc, ratelimit.Limits{})))
 	pb.RegisterChatServiceServer(gs, New(svc))
 	lis := bufconn.Listen(1 << 20)
 	go gs.Serve(lis)

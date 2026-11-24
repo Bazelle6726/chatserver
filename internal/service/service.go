@@ -22,6 +22,7 @@ import (
 
 	"chatserver/internal/chat"
 	"chatserver/internal/hub"
+	"chatserver/internal/ratelimit"
 	"chatserver/internal/store"
 )
 
@@ -44,6 +45,7 @@ type Service struct {
 	hub     *hub.Hub             // nil = no live delivery: Watch returns ErrLiveOff
 	publish func(m chat.Message) // nil = don't publish (e.g. in some tests)
 	banned  func(string) bool    // nil = no moderation
+	posts   *ratelimit.Limiter   // messages per user, however they're sent; nil = no limit
 }
 
 // New builds a service on top of a store.
@@ -65,6 +67,14 @@ func (s *Service) WithHub(h *hub.Hub, publish func(chat.Message)) *Service {
 // list's IsBanned method.
 func (s *Service) WithModeration(banned func(string) bool) *Service {
 	s.banned = banned
+	return s
+}
+
+// WithPostLimit limits how often each user may post. It applies however the
+// message arrives: HTTP, a gRPC call, or one message among many in an
+// Import or Converse stream, which per-request limits alone would miss.
+func (s *Service) WithPostLimit(l *ratelimit.Limiter) *Service {
+	s.posts = l
 	return s
 }
 
@@ -128,8 +138,12 @@ func (s *Service) memberRoom(ctx context.Context, user chat.UserID, roomID chat.
 // ---- Messages ----
 
 // PostMessage stores a message from user (who must be a member) and hands
-// it to the live feed.
+// it to the live feed. A user posting faster than the post limit gets
+// ratelimit.ErrLimited.
 func (s *Service) PostMessage(ctx context.Context, user chat.UserID, roomID chat.RoomID, text string) (chat.Message, error) {
+	if !s.posts.Allow(string(user)) {
+		return chat.Message{}, ratelimit.ErrLimited
+	}
 	m, err := s.store.PostMessage(ctx, roomID, user, text)
 	if err != nil {
 		return chat.Message{}, err

@@ -6,6 +6,7 @@ import (
 	"net/http"
 
 	"chatserver/internal/chat"
+	"chatserver/internal/ratelimit"
 	"chatserver/internal/service"
 )
 
@@ -36,6 +37,8 @@ func statusFor(err error) int {
 		return http.StatusForbidden
 	case errors.Is(err, service.ErrLiveOff):
 		return http.StatusServiceUnavailable
+	case errors.Is(err, ratelimit.ErrLimited):
+		return http.StatusTooManyRequests
 	case errors.Is(err, context.DeadlineExceeded):
 		return http.StatusGatewayTimeout
 	case errors.Is(err, context.Canceled):

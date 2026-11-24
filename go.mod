@@ -5,6 +5,7 @@ go 1.27
 require (
 	github.com/gin-gonic/gin v1.12.0
 	golang.org/x/text v0.42.0
+	golang.org/x/time v0.16.0
 	google.golang.org/grpc v1.85.0
 	google.golang.org/protobuf v1.36.12
 )

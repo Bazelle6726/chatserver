@@ -15,6 +15,7 @@ import (
 	"chatserver/internal/grpcapi"
 	"chatserver/internal/hub"
 	"chatserver/internal/pb"
+	"chatserver/internal/ratelimit"
 	"chatserver/internal/service"
 	"chatserver/internal/store"
 )
@@ -29,7 +30,7 @@ func startServer(t *testing.T) (pb.ChatServiceClient, *store.MemoryStore) {
 	go h.Run(hubCtx)
 
 	svc := service.New(s).WithHub(h, h.Publish)
-	gs := grpc.NewServer(grpc.UnaryInterceptor(grpcapi.UnaryAuth(svc)), grpc.StreamInterceptor(grpcapi.StreamAuth(svc)))
+	gs := grpc.NewServer(grpc.UnaryInterceptor(grpcapi.UnaryAuth(svc, ratelimit.Limits{})), grpc.StreamInterceptor(grpcapi.StreamAuth(svc, ratelimit.Limits{})))
 	pb.RegisterChatServiceServer(gs, grpcapi.New(svc))
 	lis := bufconn.Listen(1 << 20)
 	go gs.Serve(lis)

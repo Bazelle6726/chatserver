@@ -8,6 +8,8 @@ import (
 	"unicode"
 
 	"github.com/gin-gonic/gin"
+
+	"chatserver/internal/ratelimit"
 )
 
 const adminTokenHeader = "X-Admin-Token"
@@ -15,8 +17,9 @@ const adminTokenHeader = "X-Admin-Token"
 // maxWordLen is the longest banned word the admin API accepts.
 const maxWordLen = 50
 
-// Wrong admin tokens allowed per IP address before it's locked out for the
-// rest of the window. Without a limit, a script could try millions of tokens.
+// Wrong admin tokens allowed per IP address: a burst of adminMaxFailures,
+// then one more per adminFailureWindow/adminMaxFailures (12s). Without a
+// limit, a script could try millions of tokens.
 const (
 	adminMaxFailures   = 5
 	adminFailureWindow = time.Minute
@@ -25,7 +28,7 @@ const (
 // AdminOnly lets a request through only if it carries the right admin token.
 // failures counts wrong tokens per client IP; an IP that has used up its
 // allowance gets 429 without its token even being checked.
-func AdminOnly(token string, failures *Limiter) gin.HandlerFunc {
+func AdminOnly(token string, failures *ratelimit.Limiter) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if token == "" {
 			c.AbortWithStatusJSON(http.StatusNotFound, gin.H{"error": "admin API is off"})

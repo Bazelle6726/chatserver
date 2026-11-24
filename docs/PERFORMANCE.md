@@ -20,7 +20,13 @@ go test ./internal/api -run XXX -bench Encode -benchmem
 
 ## Load testing
 
-With the server running:
+Start the server with its rate limits off, or the load tester's many sign-ups and fast posts are refused:
+
+```bash
+go run ./cmd/server -signups-per-minute 0 -requests-per-second 0 -posts-per-second 0
+```
+
+Then, in another terminal:
 
 ```bash
 go run ./cmd/loadtest                                      # 100 watchers, 10 posters × 20/s, 10s

@@ -14,14 +14,15 @@ import (
 
 	"chatserver/internal/chat"
 	"chatserver/internal/moderation"
+	"chatserver/internal/ratelimit"
 	"chatserver/internal/service"
 )
 
 // API holds what the handlers need. Handlers are methods on *API so they can
 // reach the service without global variables.
 type API struct {
-	svc     *service.Service
-	limiter *Limiter
+	svc    *service.Service
+	limits ratelimit.Limits
 
 	// The banned-word list and its admin API. Optional (nil = no /admin
 	// routes). Hiding banned words from readers is the service's job; this
@@ -34,10 +35,10 @@ type API struct {
 	web fs.FS
 }
 
-// New builds the API on top of svc. perSec is the rate limit per user per
-// second.
-func New(svc *service.Service, perSec int) *API {
-	return &API{svc: svc, limiter: NewLimiter(perSec, nil)}
+// New builds the API on top of svc, applying limits to every request (see
+// ratelimit.Limits; a zero Limits means no limits, handy in tests).
+func New(svc *service.Service, limits ratelimit.Limits) *API {
+	return &API{svc: svc, limits: limits}
 }
 
 // WithModeration turns on the admin API for the banned-word list. Changes are

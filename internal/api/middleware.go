@@ -2,6 +2,7 @@ package api
 
 import (
 	"chatserver/internal/chat"
+	"chatserver/internal/ratelimit"
 	"chatserver/internal/service"
 	"net/http"
 
@@ -48,18 +49,31 @@ func LimitBody(n int64) gin.HandlerFunc {
 	}
 }
 
-// RateLimit stops a user who makes too many requests per second.
-// It must run AFTER Auth, because it needs to know who the user is.
-func RateLimit(l *Limiter) gin.HandlerFunc {
-	return func(c *gin.Context) { // get the user
-		user := currentUser(c)
-		if !l.Allow(string(user.ID)) {
-			c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{"error": "slow down"})
+// RateLimit stops a user who makes too many requests. It must run AFTER
+// Auth, because it needs to know who the user is. A nil limiter allows all.
+func RateLimit(l *ratelimit.Limiter) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if !l.Allow(string(currentUser(c).ID)) {
+			tooMany(c)
 			return
 		}
 		c.Next()
-		// The lock lives inside Allow, so it's held for a moment, not for the whole
-		// request. Holding a lock across c.Next() would make every user wait for the
-		// slowest request.
 	}
+}
+
+// LimitByIP stops a client address that makes too many requests. It's for
+// routes without a login, where there's no user to limit. c.ClientIP() is
+// the real peer address, since Router trusts no proxy headers.
+func LimitByIP(l *ratelimit.Limiter) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if !l.Allow(c.ClientIP()) {
+			tooMany(c)
+			return
+		}
+		c.Next()
+	}
+}
+
+func tooMany(c *gin.Context) {
+	c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{"error": ratelimit.ErrLimited.Error()})
 }

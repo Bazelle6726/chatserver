@@ -6,6 +6,7 @@ import (
 	"testing"
 	"testing/fstest"
 
+	"chatserver/internal/ratelimit"
 	"chatserver/internal/service"
 	"chatserver/internal/store"
 )
@@ -20,7 +21,7 @@ var fakeApp = fstest.MapFS{
 
 func newWebServer(t *testing.T) *testServer {
 	t.Helper()
-	return &testServer{t: t, router: New(service.New(store.NewMemoryStore()), 1000).WithWeb(fakeApp).Router()}
+	return &testServer{t: t, router: New(service.New(store.NewMemoryStore()), ratelimit.Limits{}).WithWeb(fakeApp).Router()}
 }
 
 // The app's files are served for paths no API route matches.

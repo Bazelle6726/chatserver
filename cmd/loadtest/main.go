@@ -8,8 +8,10 @@
 //	go run ./cmd/loadtest
 //	go run ./cmd/loadtest -watchers 500 -posters 20 -rate 50 -duration 30s
 //
-// gRPC has no rate limiter (that's an HTTP middleware), so the load is only
-// limited by -rate.
+// The server rate-limits sign-ups, requests and posts, which would get in
+// the way, so start it with the limits off:
+//
+//	go run ./cmd/server -signups-per-minute 0 -requests-per-second 0 -posts-per-second 0
 package main
 
 import (
