@@ -11,44 +11,52 @@ On Windows PowerShell, type `curl.exe` rather than `curl`, so you get real curl 
 
 ## A quick tour with curl
 
-**1. Create a user.** No login is needed for this:
+**1. Sign up.** This needs no login, and logs you in:
 
 ```bash
-curl -X POST localhost:8080/users -H "Content-Type: application/json" -d '{"name":"alice"}'
-# {"id":"u-1","name":"alice","role":"member"}
+curl -X POST localhost:8080/users -H "Content-Type: application/json" -d '{"name":"alice","password":"correct-horse"}'
+# {"user":{"id":"u-3f9c2a1b7e4d5c60","name":"alice","role":"member"},"token":"Xq3...long random token..."}
 ```
 
-**2. Create a room and join it.** From here on, send your user ID in the `X-User-ID` header:
+Keep the token: it's your session. Put it in a variable so the rest is easy to paste:
 
 ```bash
-curl -X POST localhost:8080/rooms -H "X-User-ID: u-1" -H "Content-Type: application/json" -d '{"name":"general"}'
-curl -X POST localhost:8080/rooms/r-1/members -H "X-User-ID: u-1"
+TOKEN=Xq3...                     # bash
+$TOKEN = "Xq3..."                # PowerShell
+```
+
+**2. Create a room and join it.** From here on, send the token in an `Authorization: Bearer` header:
+
+```bash
+curl -X POST localhost:8080/rooms -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d '{"name":"general"}'
+curl -X POST localhost:8080/rooms/r-1/members -H "Authorization: Bearer $TOKEN"
 ```
 
 **3. Watch the room live.** Run this in a second terminal and leave it running:
 
 ```bash
-curl -N -H "X-User-ID: u-1" localhost:8080/rooms/r-1/stream
+curl -N -H "Authorization: Bearer $TOKEN" localhost:8080/rooms/r-1/stream
 ```
 
 **4. Post.** Back in the first terminal:
 
 ```bash
-curl -X POST localhost:8080/rooms/r-1/messages -H "X-User-ID: u-1" -H "Content-Type: application/json" -d '{"text":"hello live"}'
-curl -X POST localhost:8080/rooms/r-1/messages -H "X-User-ID: u-1" -H "Content-Type: application/json" -d '{"text":"cheap scam here"}'
+curl -X POST localhost:8080/rooms/r-1/messages -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d '{"text":"hello live"}'
+curl -X POST localhost:8080/rooms/r-1/messages -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d '{"text":"cheap scam here"}'
 ```
 
 Both appear in the watcher immediately. The second arrives as `[removed]`, and the history shows it the same way:
 
 ```bash
-curl -H "X-User-ID: u-1" "localhost:8080/rooms/r-1/messages?limit=10"
+curl -H "Authorization: Bearer $TOKEN" "localhost:8080/rooms/r-1/messages?limit=10"
 ```
 
-**5. The same over gRPC:**
+**5. The same over gRPC:** log in to get a token for the terminal client (or reuse the one above):
 
 ```bash
-go run ./cmd/client -user u-1 watch r-1               # terminal 2
-go run ./cmd/client -user u-1 post r-1 "hello gRPC"   # terminal 1
+go run ./cmd/client login alice correct-horse          # prints a token
+go run ./cmd/client -token $TOKEN watch r-1            # terminal 2
+go run ./cmd/client -token $TOKEN post r-1 "hello gRPC" # terminal 1
 ```
 
 HTTP and gRPC share the same hub, so a gRPC watcher sees HTTP posts and the other way round.
@@ -59,16 +67,28 @@ Base URL: `http://localhost:8080`. Bodies are JSON unless you ask for [protobuf]
 
 ### Authentication
 
-All routes except the two user routes need an existing user's ID, in the `X-User-ID` header or, for clients that can't set headers, the `user` query parameter (`?user=u-1`). Without one you get `401`. The admin routes use a token instead (see [below](#moderation-and-the-admin-api)).
+Accounts have a name and a password. Signing up (`POST /users`) or logging in (`POST /sessions`) starts a **session** and returns its token. Every other route needs a live session, sent one of two ways:
 
-> This trusts the client, which is fine for a learning project. A real service would use signed tokens, and keep them out of URLs, which end up in logs and browser history.
+- **`Authorization: Bearer <token>`**, for curl, scripts and the CLI tools
+- **the `chat_session` cookie**, which the server sets when you sign up or log in, for browsers. It's `HttpOnly`, so page scripts can't read it, and `SameSite=Strict`, so other sites can't make requests with it. The web app never touches the token, and the live feed's `EventSource` is logged in by the cookie too.
+
+Without a live session you get `401`. Sessions last 7 days; `DELETE /sessions` ends one early and clears the cookie.
+
+- **Passwords**: 8 to 72 bytes. Only a bcrypt hash is stored.
+- **User IDs** are random (`u-3f9c2a1b7e4d5c60`), so they can't be guessed or counted, and they're not a credential: knowing someone's ID doesn't let you act as them.
+- **Logging in** matches the name the way uniqueness does, so `Alice` logs in as `alice`. A wrong name and a wrong password get the same `401`, so a failed login doesn't reveal who has an account.
+
+The admin routes use their own token instead (see [below](#moderation-and-the-admin-api)).
 
 ### Endpoints
 
 | Method | Path | Auth | Body | Success |
 |---|---|---|---|---|
-| `POST` | `/users` | – | `{"name": "alice"}` | `201` user |
-| `GET` | `/users/:id` | – | – | `200` user |
+| `POST` | `/users` | – | `{"name": "alice", "password": "..."}` | `201` `{"user": user, "token": "..."}`, and the session cookie |
+| `POST` | `/sessions` | – | `{"name": "alice", "password": "..."}` | `200` `{"user": user, "token": "..."}`, and the session cookie |
+| `DELETE` | `/sessions` | user | – | `204` (logged out; the cookie is cleared) |
+| `GET` | `/me` | user | – | `200` user: who the session belongs to |
+| `GET` | `/users/:id` | user | – | `200` user |
 | `POST` | `/rooms` | user | `{"name": "general", "max_history": 100}` | `201` room |
 | `GET` | `/rooms` | user | – | `200` list of rooms, sorted by name |
 | `POST` | `/rooms/:id/members` | user | – | `204` (you join the room) |
@@ -90,19 +110,25 @@ All routes except the two user routes need an existing user's ID, in the `X-User
 - **Body size**: at most 64 KiB, then `413`.
 - **`max_history`**: 1 to 1000; omitted or 0 means 100.
 - **`limit`**: 1 to 500, default 50.
-- **Rate limit**: 20 requests per second per user on user routes, then `429`.
+- **Rate limits**, all token buckets (an average rate, with short bursts allowed), answered with `429`:
+  - 20 requests a second per logged-in user (bursts of 40)
+  - 20 posted messages a second per user (bursts of 40), counted the same over HTTP and gRPC, including messages inside `Import` and `Converse` streams
+  - 10 requests a second per IP address on routes without a login (bursts of 30)
+  - 10 new accounts a minute per IP address
+  - 10 login attempts a minute per IP address, which slows down password guessing
+  - Change them with the server's `-requests-per-second`, `-posts-per-second`, `-signups-per-minute` and `-logins-per-minute` flags (or their `CHAT_*` variables, see the [README](../README.md#configuration)); 0 turns one off.
 
 ### Response shapes
 
 ```json
 // user
-{"id": "u-1", "name": "alice", "role": "member"}
+{"id": "u-3f9c2a1b7e4d5c60", "name": "alice", "role": "member"}
 
 // room
 {"id": "r-1", "name": "general", "members": 3}
 
 // message
-{"id": "m-7", "room": "r-1", "author": "u-1", "kind": "text",
+{"id": "m-7", "room": "r-1", "author": "u-3f9c2a1b7e4d5c60", "kind": "text",
  "text": "hello", "created_at": "2026-11-09T14:02:11.123Z"}
 ```
 
@@ -117,12 +143,12 @@ Errors are always JSON. Validation errors also name the field:
 | Status | When |
 |---|---|
 | `400` | invalid body, name, text, limit or word |
-| `401` | missing or unknown user ID, or a missing or wrong admin token |
+| `401` | no session, or one that's unknown, logged out or expired; a wrong name or password; or a missing or wrong admin token |
 | `403` | posting to, reading or watching a room you haven't joined |
 | `404` | unknown user, room or path, or the admin API is off |
 | `409` | name already taken (or one that looks the same), or already a member |
 | `413` | request body over 64 KiB |
-| `429` | rate limit exceeded, or too many wrong admin tokens |
+| `429` | a rate limit exceeded, or too many wrong admin tokens |
 | `500` | anything unexpected; the body is just `{"error": "internal error"}` and the details go to the server log |
 
 ## Live feed (SSE)
@@ -133,14 +159,15 @@ Errors are always JSON. Validation errors also name the field:
 : connected
 
 event: message
-data: {"id":"m-1","room":"r-1","author":"u-1","kind":"text","text":"hello live","created_at":"..."}
+data: {"id":"m-1","room":"r-1","author":"u-3f9c2a1b7e4d5c60","kind":"text","text":"hello live","created_at":"..."}
 ```
 
 In a browser, which is how the web app does it:
 
 ```js
-// EventSource can't set custom headers, so the user ID goes in the URL.
-const es = new EventSource("/rooms/r-1/stream?user=u-1");
+// EventSource can't set headers, but it sends cookies: the session cookie
+// from signing in logs it in.
+const es = new EventSource("/rooms/r-1/stream");
 es.addEventListener("message", e => console.log(JSON.parse(e.data)));
 ```
 
@@ -167,7 +194,7 @@ A word list still won't catch everything: a word split differently (`sc am`) or 
 
 The admin API is **off unless `CHAT_ADMIN_TOKEN` is set** to at least 16 characters when the server starts; while it's off, its routes answer `404`. Each request sends the token in the `X-Admin-Token` header.
 
-After **5 wrong tokens in a minute** from one IP address, that address gets `429` until the minute is up, even with the right token. The server uses the connection's real address and ignores `X-Forwarded-For`, so a client can't dodge the lockout by claiming a new IP. Behind a reverse proxy, add the proxy's address to `SetTrustedProxies` in [`router.go`](../internal/api/router.go).
+After **5 wrong tokens** from one IP address, that address gets `429`, even with the right token, and earns one more try every 12 seconds (5 a minute). The server uses the connection's real address and ignores `X-Forwarded-For`, so a client can't dodge the lockout by claiming a new IP. Behind a reverse proxy, add the proxy's address to `SetTrustedProxies` in [`router.go`](../internal/api/router.go).
 
 ```bash
 TOKEN=pick-a-long-secret
@@ -197,32 +224,35 @@ The web app's **Moderation (admins)** panel uses these same routes.
 
 ## gRPC API
 
-Defined in [`internal/pb/chat.proto`](../internal/pb/chat.proto) and served on `localhost:9090`. The user ID travels as `x-user-id` metadata; `CreateUser` and `GetUser` don't need it.
+Defined in [`internal/pb/chat.proto`](../internal/pb/chat.proto) and served on `localhost:9090` (see `-grpc-addr`). The session token travels as `authorization` metadata, `Bearer <token>`, like the HTTP header. `CreateUser` and `Login` don't need one, and return one.
 
 | Call | Kind | Does |
 |---|---|---|
-| `CreateUser`, `GetUser` | unary | users |
+| `CreateUser`, `Login`, `Logout` | unary | sign up (and log in), log in, log out |
+| `GetUser` | unary | look a user up |
 | `CreateRoom`, `ListRooms`, `JoinRoom` | unary | rooms |
 | `PostMessage`, `History` | unary | messages |
 | `Watch` | server streaming | receive a room's messages live |
 | `Import` | client streaming | send many messages, get one summary |
 | `Converse` | bidirectional | post and receive on one call; the first message names the room |
 
-Errors come back as gRPC status codes that match the HTTP ones: `InvalidArgument`, `Unauthenticated`, `PermissionDenied`, `NotFound`, `AlreadyExists`, `Internal`. As over HTTP, `History` and `Watch` need you to have joined the room (else `PermissionDenied`), and an `Internal` error's message is just "internal error". `Converse` joins you to the room named in its first message, if you aren't a member yet.
+Errors come back as gRPC status codes that match the HTTP ones: `InvalidArgument`, `Unauthenticated`, `PermissionDenied`, `NotFound`, `AlreadyExists`, `ResourceExhausted` (a rate limit, the same ones as over HTTP), `Internal`. As over HTTP, `History` and `Watch` need you to have joined the room (else `PermissionDenied`), and an `Internal` error's message is just "internal error". `Converse` joins you to the room named in its first message, if you aren't a member yet.
 
 ### The terminal client
 
 ```bash
 go run ./cmd/client                                   # help
-go run ./cmd/client create-user bob
-go run ./cmd/client -user u-2 create-room random
-go run ./cmd/client -user u-2 rooms
-go run ./cmd/client -user u-2 join r-2
-go run ./cmd/client -user u-2 post r-2 "hi"
-go run ./cmd/client -user u-2 history r-2
-go run ./cmd/client -user u-2 watch r-2               # server streaming; Ctrl+C to stop
-go run ./cmd/client -user u-2 import r-2 lines.txt    # client streaming; one message per line
-go run ./cmd/client -user u-2 chat r-2                # bidirectional; type to post
+go run ./cmd/client create-user bob correct-horse    # prints a token
+$env:CHAT_TOKEN = "<the token>"                       # PowerShell; or pass -token every time
+go run ./cmd/client create-room random
+go run ./cmd/client rooms
+go run ./cmd/client join r-2
+go run ./cmd/client post r-2 "hi"
+go run ./cmd/client history r-2
+go run ./cmd/client watch r-2               # server streaming; Ctrl+C to stop
+go run ./cmd/client import r-2 lines.txt    # client streaming; one message per line
+go run ./cmd/client chat r-2                # bidirectional; type to post
+go run ./cmd/client logout
 ```
 
 The server registers gRPC reflection, so [grpcurl](https://github.com/fullstorydev/grpcurl) works without the `.proto` file: `grpcurl -plaintext localhost:9090 list`.

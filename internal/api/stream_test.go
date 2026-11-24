@@ -13,13 +13,14 @@ import (
 
 	"chatserver/internal/chat"
 	"chatserver/internal/hub"
+	"chatserver/internal/ratelimit"
 	"chatserver/internal/store"
 )
 
-// TODO 46: postMessage must hand every stored message to a.publish.
+// postMessage must hand every stored message to a.publish.
 func TestPostPublishes(t *testing.T) {
 	got := make(chan chat.Message, 1)
-	a := New(store.NewMemoryStore(), 1000).WithHub(nil, func(m chat.Message) { got <- m })
+	a := New(newSvc().WithHub(nil, func(m chat.Message) { got <- m }), ratelimit.Limits{})
 	s := &testServer{t: t, router: a.Router()}
 
 	u := s.mustUser("alice")
@@ -33,7 +34,7 @@ func TestPostPublishes(t *testing.T) {
 			t.Errorf("published %+v", m)
 		}
 	case <-time.After(time.Second):
-		t.Fatal("postMessage didn't call a.publish (TODO 46)")
+		t.Fatal("postMessage didn't call a.publish")
 	}
 
 	// A failed post must NOT be published.
@@ -46,7 +47,6 @@ func TestPostPublishes(t *testing.T) {
 }
 
 // The full live path: POST -> pool (filters banned words) -> hub -> SSE stream.
-// Needs TODOs 39-47.
 func TestLiveStream(t *testing.T) {
 	st := store.NewMemoryStore()
 	h := hub.NewHub(16)
@@ -58,7 +58,7 @@ func TestLiveStream(t *testing.T) {
 	pool.Start(1)
 	defer pool.Stop()
 
-	a := New(st, 1000).WithHub(h, pool.Submit)
+	a := New(newSvcOn(st).WithHub(h, pool.Submit), ratelimit.Limits{})
 	srv := httptest.NewServer(a.Router()) // a real server on a random port
 	defer srv.Close()
 	s := &testServer{t: t, router: a.Router()}
@@ -71,14 +71,14 @@ func TestLiveStream(t *testing.T) {
 	reqCtx, stopStream := context.WithTimeout(context.Background(), 3*time.Second)
 	defer stopStream()
 	req, _ := http.NewRequestWithContext(reqCtx, "GET", srv.URL+"/rooms/"+r+"/stream", nil)
-	req.Header.Set("X-User-ID", u)
+	req.Header.Set("Authorization", "Bearer "+u)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("opening the stream: %v", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("stream status %d, want 200 (is the route registered? TODO 47)", resp.StatusCode)
+		t.Fatalf("stream status %d, want 200", resp.StatusCode)
 	}
 	lines := bufio.NewReader(resp.Body)
 	if first, _ := lines.ReadString('\n'); !strings.HasPrefix(first, ": connected") {
@@ -89,7 +89,7 @@ func TestLiveStream(t *testing.T) {
 		body, _ := json.Marshal(map[string]string{"text": text})
 		req, _ := http.NewRequest("POST", srv.URL+"/rooms/"+r+"/messages", bytes.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("X-User-ID", u)
+		req.Header.Set("Authorization", "Bearer "+u)
 		res, err := http.DefaultClient.Do(req)
 		if err != nil {
 			t.Fatal(err)

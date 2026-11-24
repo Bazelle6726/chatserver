@@ -51,29 +51,3 @@ func TestToMessageDTO(t *testing.T) {
 		t.Errorf("toMessageDTO =\n %+v\nwant\n %+v", got, want)
 	}
 }
-
-func TestLimiter(t *testing.T) {
-	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
-	clock := func() time.Time { return now }
-	l := NewLimiter(2, clock)
-
-	if !l.Allow("u-1") || !l.Allow("u-1") {
-		t.Fatal("first 2 requests in a second should be allowed")
-	}
-	if l.Allow("u-1") {
-		t.Error("3rd request in the same second should be refused")
-	}
-	if !l.Allow("u-2") {
-		t.Error("each user has their own limit: u-2 should be allowed")
-	}
-
-	now = now.Add(999 * time.Millisecond)
-	if l.Allow("u-1") {
-		t.Error("still inside the same 1-second window: should be refused")
-	}
-
-	now = now.Add(1 * time.Millisecond) // exactly 1s after the window started
-	if !l.Allow("u-1") {
-		t.Error("a new window should start after one second")
-	}
-}

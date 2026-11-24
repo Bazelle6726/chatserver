@@ -6,7 +6,7 @@ import (
 	"testing"
 	"testing/fstest"
 
-	"chatserver/internal/store"
+	"chatserver/internal/ratelimit"
 )
 
 // fakeApp stands in for the built React app: fstest.MapFS is an in-memory
@@ -19,10 +19,10 @@ var fakeApp = fstest.MapFS{
 
 func newWebServer(t *testing.T) *testServer {
 	t.Helper()
-	return &testServer{t: t, router: New(store.NewMemoryStore(), 1000).WithWeb(fakeApp).Router()}
+	return &testServer{t: t, router: New(newSvc(), ratelimit.Limits{}).WithWeb(fakeApp).Router()}
 }
 
-// TODO 79: the app's files are served for paths no API route matches.
+// The app's files are served for paths no API route matches.
 func TestServesTheWebApp(t *testing.T) {
 	s := newWebServer(t)
 
@@ -45,23 +45,18 @@ func TestServesTheWebApp(t *testing.T) {
 	expectStatus(t, s.do("POST", "/nowhere", map[string]string{}, ""), http.StatusNotFound, "POST to a path with no route")
 
 	// The API is unaffected: its routes still win.
-	expectStatus(t, s.do("POST", "/users", map[string]string{"name": "alice"}, ""), http.StatusCreated, "POST /users")
+	expectStatus(t, s.do("POST", "/users", map[string]string{"name": "alice", "password": testPassword}, ""), http.StatusCreated, "POST /users")
 	expectStatus(t, s.do("GET", "/rooms", nil, ""), http.StatusUnauthorized, "GET /rooms without a user still goes to the API")
 }
 
-// TODO 74: no web app configured, no files served.
+// No web app configured, no files served.
 func TestNoWebAppWithoutWithWeb(t *testing.T) {
 	expectStatus(t, newServer(t).do("GET", "/", nil, ""), http.StatusNotFound, "GET / on an API without WithWeb")
 }
 
-// TODO 80: Auth also accepts ?user=, because a browser's EventSource can't
-// send headers.
-func TestAuthAcceptsUserQuery(t *testing.T) {
+// The old ?user= login is gone: a user ID is not a credential.
+func TestNoUserQueryLogin(t *testing.T) {
 	s := newServer(t)
-	alice := s.mustUser("alice")
-
-	expectStatus(t, s.do("GET", "/rooms?user="+alice, nil, ""), http.StatusOK, "?user= instead of the header")
-	expectStatus(t, s.do("GET", "/rooms?user=u-404", nil, ""), http.StatusUnauthorized, "?user= with an unknown user")
-	expectStatus(t, s.do("GET", "/rooms", nil, ""), http.StatusUnauthorized, "neither header nor ?user=")
-	expectStatus(t, s.do("GET", "/rooms", nil, alice), http.StatusOK, "the header still works")
+	id := s.idOf(s.mustUser("alice"))
+	expectStatus(t, s.do("GET", "/rooms?user="+id, nil, ""), http.StatusUnauthorized, "?user= with a real user ID")
 }

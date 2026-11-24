@@ -8,8 +8,10 @@
 //	go run ./cmd/loadtest
 //	go run ./cmd/loadtest -watchers 500 -posters 20 -rate 50 -duration 30s
 //
-// gRPC has no rate limiter (that's an HTTP middleware), so the load is only
-// limited by -rate.
+// The server rate-limits sign-ups, requests and posts, which would get in
+// the way, so start it with the limits off:
+//
+//	go run ./cmd/server -signups-per-minute 0 -requests-per-second 0 -posts-per-second 0
 package main
 
 import (
@@ -64,9 +66,10 @@ func main() {
 // Names get a fresh tag each run, so you can run it again without clashes.
 func setup(ctx context.Context, client pb.ChatServiceClient, posters, watchers, history int) (Config, error) {
 	tag := fmt.Sprintf("lt%d", time.Now().Unix()%1000000)
+	// newUser signs a user up and returns their session token.
 	newUser := func(name string) (string, error) {
-		u, err := client.CreateUser(ctx, &pb.CreateUserRequest{Name: name})
-		return u.GetId(), err
+		res, err := client.CreateUser(ctx, &pb.CreateUserRequest{Name: name, Password: "load-test-password"})
+		return res.GetToken(), err
 	}
 
 	var cfg Config

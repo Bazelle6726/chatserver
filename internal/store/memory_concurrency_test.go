@@ -1,6 +1,8 @@
 package store
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"testing"
@@ -51,12 +53,12 @@ func TestStoreConcurrentAccess(t *testing.T) {
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				u, err := s.CreateUser(fmt.Sprintf("user%d", i))
+				u, err := s.CreateUser(t.Context(), fmt.Sprintf("user%d", i), nil)
 				if err != nil {
 					t.Errorf("CreateUser: %v", err)
 					return
 				}
-				r, err := s.CreateRoom(fmt.Sprintf("room%d", i), 10)
+				r, err := s.CreateRoom(t.Context(), fmt.Sprintf("room%d", i), 10)
 				if err != nil {
 					t.Errorf("CreateRoom: %v", err)
 					return
@@ -66,11 +68,11 @@ func TestStoreConcurrentAccess(t *testing.T) {
 					return
 				}
 				for j := 0; j < 10; j++ {
-					if _, err := s.PostMessage(r.ID, u.ID, "hello"); err != nil {
+					if _, err := s.PostMessage(t.Context(), r.ID, u.ID, "hello"); err != nil {
 						t.Errorf("PostMessage: %v", err)
 					}
-					_ = s.ListRooms()
-					if _, err := s.GetUser(u.ID); err != nil {
+					_ = mustList(t, s)
+					if _, err := s.GetUser(t.Context(), u.ID); err != nil {
 						t.Errorf("GetUser: %v", err)
 					}
 				}
@@ -85,11 +87,11 @@ func TestStoreConcurrentAccess(t *testing.T) {
 		t.Fatal("timed out: probably a deadlock (a method locking the store twice)")
 	}
 
-	if n := len(s.ListRooms()); n != workers {
+	if n := len(mustList(t, s)); n != workers {
 		t.Fatalf("ListRooms has %d rooms, want %d (IDs collided or a write was lost)", n, workers)
 	}
 	ids := make(map[chat.RoomID]bool)
-	for _, r := range s.ListRooms() {
+	for _, r := range mustList(t, s) {
 		ids[r.ID] = true
 	}
 	if len(ids) != workers {
@@ -109,7 +111,7 @@ func TestDuplicateNamesUnderConcurrency(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			if _, err := s.CreateUser("alice"); err == nil {
+			if _, err := s.CreateUser(t.Context(), "alice", nil); err == nil {
 				mu.Lock()
 				wins++
 				mu.Unlock()
@@ -119,5 +121,30 @@ func TestDuplicateNamesUnderConcurrency(t *testing.T) {
 	wg.Wait()
 	if wins != 1 {
 		t.Errorf("%d goroutines created \"alice\", want exactly 1", wins)
+	}
+}
+
+func mustList(t *testing.T, s *MemoryStore) []*chat.Room {
+	t.Helper()
+	rooms, err := s.ListRooms(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return rooms
+}
+
+// Every method gives up straight away if its context is already cancelled.
+func TestCancelledContext(t *testing.T) {
+	s := NewMemoryStore()
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	if _, err := s.CreateUser(ctx, "alice", nil); !errors.Is(err, context.Canceled) {
+		t.Errorf("CreateUser with a cancelled context = %v, want context.Canceled", err)
+	}
+	if _, err := s.ListRooms(ctx); !errors.Is(err, context.Canceled) {
+		t.Errorf("ListRooms with a cancelled context = %v, want context.Canceled", err)
+	}
+	if _, err := s.UserByName(t.Context(), "alice"); !errors.Is(err, chat.ErrUserNotFound) {
+		t.Errorf("CreateUser with a cancelled context must not have stored the user: %v", err)
 	}
 }

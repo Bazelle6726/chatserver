@@ -83,14 +83,10 @@ func (h *Hub) add(c *Client) {
 	room[c] = struct{}{}
 }
 
-// remove takes c out of its room and closes its outbox.
-//
-// TODO(41):
-//   - if c is NOT in h.rooms[c.Room], return straight away. remove can be
-//     called twice for the same client (Leave after the hub already dropped it),
-//     and closing a channel twice panics
-//   - delete it from the set; if the set is now empty, delete the room too
-//   - close(c.out): the hub is the only sender, so the hub closes it
+// remove takes c out of its room and closes its outbox. It does nothing if c
+// is already gone: remove can run twice for one client (Leave after the hub
+// already dropped it), and closing a channel twice panics. The hub is the
+// only sender on c.out, so the hub is the one that closes it.
 func (h *Hub) remove(c *Client) {
 	if _, exists := h.rooms[c.Room][c]; !exists {
 		return

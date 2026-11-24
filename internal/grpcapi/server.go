@@ -1,20 +1,12 @@
 // Package grpcapi is the gRPC front door. It's the same job as package api,
-// but for gRPC: turn calls into Store and Hub operations and turn the results
-// into protobuf messages. All the chat logic stays in chat, store and hub.
+// but for gRPC: turn calls into service calls and the results into protobuf
+// messages. The chat rules all live in package service, shared with the
+// HTTP API.
 package grpcapi
 
 import (
-	"chatserver/internal/chat"
-	"chatserver/internal/hub"
 	"chatserver/internal/pb"
-	"chatserver/internal/store"
-)
-
-const (
-	defaultMaxHistory = 100
-	maxMaxHistory     = 1000
-	defaultLimit      = 50
-	maxLimit          = 500
+	"chatserver/internal/service"
 )
 
 // Server implements pb.ChatServiceServer, the interface protoc generated
@@ -27,62 +19,11 @@ const (
 type Server struct {
 	pb.UnimplementedChatServiceServer
 
-	store   store.Store
-	hub     *hub.Hub             // nil = no live delivery (Watch and Converse refuse)
-	publish func(m chat.Message) // nil = don't publish (e.g. in some tests)
-	banned  func(string) bool    // nil = no moderation of History
+	svc *service.Service
 }
 
-// New builds the gRPC server. In main, publish is the worker pool's Submit,
-// exactly as for the HTTP API.
-func New(s store.Store, h *hub.Hub, publish func(chat.Message)) *Server {
-	return &Server{store: s, hub: h, publish: publish}
-}
-
-// WithModeration makes History show messages with a banned word as
-// "[removed]", the same as the live feed and the HTTP API. In main, banned is
-// the moderation list's IsBanned method.
-func (s *Server) WithModeration(banned func(string) bool) *Server {
-	s.banned = banned
-	return s
-}
-
-// memberRoom looks up a room and checks user has joined it. Reading a room
-// (History, Watch) needs membership, the same as posting to it.
-func (s *Server) memberRoom(user chat.UserID, id string) (*chat.Room, error) {
-	room, err := s.store.GetRoom(chat.RoomID(id))
-	if err != nil {
-		return nil, err
-	}
-	if !room.IsMember(user) {
-		return nil, chat.ErrNotMember
-	}
-	return room, nil
-}
-
-// hideBanned replaces the text of banned messages in ms. ms must be a copy
-// (room.LastN returns one), so the store keeps the originals.
-func (s *Server) hideBanned(ms []chat.Message) []chat.Message {
-	if s.banned == nil {
-		return ms
-	}
-	for i := range ms {
-		if s.banned(ms[i].Text) {
-			ms[i].Text = "[removed]"
-		}
-	}
-	return ms
-}
-
-// post stores a message and hands it to the live feed. PostMessage, Import and
-// Converse all post messages, so they share this.
-func (s *Server) post(author chat.UserID, room string, text string) (chat.Message, error) {
-	m, err := s.store.PostMessage(chat.RoomID(room), author, text)
-	if err != nil {
-		return chat.Message{}, err
-	}
-	if s.publish != nil {
-		s.publish(m)
-	}
-	return m, nil
+// New builds the gRPC server on top of svc, the same service the HTTP API
+// uses.
+func New(svc *service.Service) *Server {
+	return &Server{svc: svc}
 }

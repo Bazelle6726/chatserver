@@ -8,6 +8,7 @@ import (
 
 	"chatserver/internal/moderation"
 	"chatserver/internal/pb"
+	"chatserver/internal/service"
 	"chatserver/internal/store"
 )
 
@@ -15,19 +16,19 @@ import (
 // do, or gRPC clients could read what everyone else sees as "[removed]".
 func TestHistoryHidesBannedWords(t *testing.T) {
 	s := store.NewMemoryStore()
-	u, _ := s.CreateUser("alice")
-	r, _ := s.CreateRoom("general", 10)
+	u, _ := s.CreateUser(t.Context(), "alice", nil)
+	r, _ := s.CreateRoom(t.Context(), "general", 10)
 	if err := r.Join(u.ID); err != nil {
 		t.Fatal(err)
 	}
 	for _, text := range []string{"hello", "cheap scam here", "scampi"} {
-		if _, err := s.PostMessage(r.ID, u.ID, text); err != nil {
+		if _, err := s.PostMessage(t.Context(), r.ID, u.ID, text); err != nil {
 			t.Fatal(err)
 		}
 	}
 
-	srv := New(s, nil, nil).WithModeration(moderation.New("scam").IsBanned)
-	ctx := withUser(context.Background(), u) // what the auth interceptor does
+	srv := New(service.New(s).WithModeration(moderation.New("scam").IsBanned))
+	ctx := withUser(context.Background(), u, "") // what the auth interceptor does
 	resp, err := srv.History(ctx, &pb.HistoryRequest{RoomId: string(r.ID)})
 	if err != nil {
 		t.Fatal(err)

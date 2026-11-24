@@ -1,0 +1,10 @@
+goos: windows
+goarch: amd64
+pkg: chatserver/internal/chat
+cpu: 13th Gen Intel(R) Core(TM) i5-1335U
+BenchmarkHistoryAdd/max=100-12         	 9537736	       114.0 ns/op	       0 B/op	       0 allocs/op
+BenchmarkHistoryAdd/max=1000-12        	  567709	      2135 ns/op	       0 B/op	       0 allocs/op
+BenchmarkHistoryLastN/max=100-12       	  841743	      1298 ns/op	    4864 B/op	       1 allocs/op
+BenchmarkHistoryLastN/max=1000-12      	 1344128	       944.2 ns/op	    4864 B/op	       1 allocs/op
+PASS
+ok  	chatserver/internal/chat	5.083s

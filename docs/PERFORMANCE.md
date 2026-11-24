@@ -20,7 +20,13 @@ go test ./internal/api -run XXX -bench Encode -benchmem
 
 ## Load testing
 
-With the server running:
+Start the server with its rate limits off, or the load tester's many sign-ups and fast posts are refused:
+
+```bash
+go run ./cmd/server -signups-per-minute 0 -requests-per-second 0 -posts-per-second 0
+```
+
+Then, in another terminal:
 
 ```bash
 go run ./cmd/loadtest                                      # 100 watchers, 10 posters × 20/s, 10s
@@ -55,6 +61,6 @@ Under load, most of the CPU goes to network writes (~30%) and the garbage collec
 go test ./internal/chat -run XXX -bench History -benchmem
 ```
 
-Profiling this benchmark showed that the room history spent ~97% of its time copying memory once it was full, because every new message shifted all the others down. Replacing it with a **ring buffer**, which overwrites the oldest message in place, made adding a message 48× faster at 1,000 messages (2,135 ns → 44 ns), and the cost is now the same for any history size.
+Profiling this benchmark showed that the room history spent ~97% of its time copying memory once it was full, because every new message shifted all the others down. Replacing it with a **ring buffer**, which overwrites the oldest message in place, made adding a message 48× faster at 1,000 messages (2,135 ns → 44 ns), and the cost is now the same for any history size. The raw benchmark output is in [benchmarks/history-ring-before.txt](benchmarks/history-ring-before.txt) and [benchmarks/history-ring-after.txt](benchmarks/history-ring-after.txt).
 
 For the server as a whole the gain is small, because the live profile showed the history was a small part of the total. Speeding up something that takes 2% of the time can only ever save 2%.

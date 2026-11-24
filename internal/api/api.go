@@ -1,54 +1,44 @@
 // Package api is the HTTP layer: it turns HTTP requests into calls on the
-// Store and turns the results back into JSON. It contains no chat logic of
-// its own - that all lives in the chat and store packages.
+// service and turns the results back into JSON (or protobuf). It contains no
+// chat rules of its own: those all live in package service, which the gRPC
+// API shares.
 package api
 
 import (
 	"errors"
 	"io/fs"
-	"log"
+	"log/slog"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
 
 	"chatserver/internal/chat"
-	"chatserver/internal/hub"
 	"chatserver/internal/moderation"
-	"chatserver/internal/store"
+	"chatserver/internal/ratelimit"
+	"chatserver/internal/service"
 )
 
 // API holds what the handlers need. Handlers are methods on *API so they can
-// reach the store without global variables.
+// reach the service without global variables.
 type API struct {
-	store   store.Store
-	limiter *Limiter
+	svc    *service.Service
+	limits ratelimit.Limits
 
-	// Stage 3: live delivery. Both are optional (nil in most tests).
-	hub     *hub.Hub             // who's watching which room
-	publish func(m chat.Message) // called after every new message
-
-	// Stage 7: the banned-word list and its admin API. Optional (nil = no
-	// /admin routes).
+	// The banned-word list and its admin API. Optional (nil = no /admin
+	// routes). Hiding banned words from readers is the service's job; this
+	// is only for changing the list.
 	words      *moderation.List
 	wordsPath  string // where changes are saved ("" = don't save)
 	adminToken string // the X-Admin-Token admins must send ("" = admin API off)
 
-	// Stage 7: the browser app's files (nil = no web app).
+	// The browser app's files (nil = no web app).
 	web fs.FS
 }
 
-// New builds the API. perSec is the rate limit per user per second.
-func New(s store.Store, perSec int) *API {
-	return &API{store: s, limiter: NewLimiter(perSec, nil)}
-}
-
-// WithHub turns on live delivery: publish is called with every new message
-// (in main it's the worker pool's Submit), and h serves the /stream endpoint.
-// It returns a so calls can be chained: api.New(s, 20).WithHub(h, pool.Submit)
-func (a *API) WithHub(h *hub.Hub, publish func(chat.Message)) *API {
-	a.hub = h
-	a.publish = publish
-	return a
+// New builds the API on top of svc, applying limits to every request (see
+// ratelimit.Limits; a zero Limits means no limits, handy in tests).
+func New(svc *service.Service, limits ratelimit.Limits) *API {
+	return &API{svc: svc, limits: limits}
 }
 
 // WithModeration turns on the admin API for the banned-word list. Changes are
@@ -81,7 +71,7 @@ func (a *API) WithWeb(fsys fs.FS) *API {
 func writeError(c *gin.Context, err error) {
 	status := statusFor(err)
 	if status == http.StatusInternalServerError {
-		log.Printf("internal error: %s %s: %v", c.Request.Method, c.FullPath(), err)
+		slog.ErrorContext(c.Request.Context(), "internal error", "method", c.Request.Method, "route", c.FullPath(), "err", err)
 		c.AbortWithStatusJSON(status, gin.H{"error": "internal error"})
 		return
 	}
@@ -93,8 +83,11 @@ func writeError(c *gin.Context, err error) {
 	c.AbortWithStatusJSON(status, body)
 }
 
-// userKey is where the Auth middleware stores the logged-in user.
-const userKey = "user"
+// Where the Auth middleware stores the logged-in user and their token.
+const (
+	userKey  = "user"
+	tokenKey = "token"
+)
 
 // currentUser returns the user that Auth put on the context.
 // Only call it in handlers that run after Auth.

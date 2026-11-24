@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"golang.org/x/crypto/bcrypt"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
@@ -19,6 +20,8 @@ import (
 	"chatserver/internal/chat"
 	"chatserver/internal/hub"
 	"chatserver/internal/pb"
+	"chatserver/internal/ratelimit"
+	"chatserver/internal/service"
 	"chatserver/internal/store"
 )
 
@@ -28,6 +31,8 @@ import (
 type env struct {
 	t         *testing.T
 	store     *store.MemoryStore
+	svc       *service.Service
+	ids       map[string]chat.UserID // session token -> user ID, for users made by e.user
 	hub       *hub.Hub
 	client    pb.ChatServiceClient
 	published atomic.Int64 // how many messages reached publish
@@ -35,7 +40,7 @@ type env struct {
 
 func newEnv(t *testing.T) *env {
 	t.Helper()
-	e := &env{t: t, store: store.NewMemoryStore(), hub: hub.NewHub(16)}
+	e := &env{t: t, store: store.NewMemoryStore(), hub: hub.NewHub(16), ids: map[string]chat.UserID{}}
 	hubCtx, stopHub := context.WithCancel(context.Background())
 	go e.hub.Run(hubCtx)
 
@@ -43,8 +48,9 @@ func newEnv(t *testing.T) *env {
 		e.published.Add(1)
 		e.hub.Publish(m)
 	}
-	gs := grpc.NewServer(grpc.UnaryInterceptor(UnaryAuth(e.store)), grpc.StreamInterceptor(StreamAuth(e.store)))
-	pb.RegisterChatServiceServer(gs, New(e.store, e.hub, publish))
+	e.svc = service.New(e.store).WithHub(e.hub, publish).WithPasswordCost(bcrypt.MinCost)
+	gs := grpc.NewServer(grpc.UnaryInterceptor(UnaryAuth(e.svc, ratelimit.Limits{})), grpc.StreamInterceptor(StreamAuth(e.svc, ratelimit.Limits{})))
+	pb.RegisterChatServiceServer(gs, New(e.svc))
 	lis := bufconn.Listen(1 << 20)
 	go gs.Serve(lis)
 
@@ -63,35 +69,47 @@ func newEnv(t *testing.T) *env {
 	return e
 }
 
-// as returns a context for a call made by user ("" = no user), which fails
-// after 2 seconds instead of hanging if something is stuck.
-func (e *env) as(user string) context.Context {
+// as returns a context for a call made with a session token ("" = not
+// logged in), which fails after 2 seconds instead of hanging if something
+// is stuck.
+func (e *env) as(token string) context.Context {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	e.t.Cleanup(cancel)
-	if user != "" {
-		ctx = metadata.AppendToOutgoingContext(ctx, "x-user-id", user)
+	if token != "" {
+		ctx = metadata.AppendToOutgoingContext(ctx, "authorization", "Bearer "+token)
 	}
 	return ctx
 }
 
-// Setup straight through the store, so each test only depends on its own TODO.
+// testPassword is every test user's password.
+const testPassword = "correct-horse"
+
+// user signs a user up and returns their session token. Setup goes straight
+// through the service, so each test only exercises its own call.
 func (e *env) user(name string) string {
 	e.t.Helper()
-	u, err := e.store.CreateUser(name)
+	u, token, err := e.svc.Register(e.t.Context(), name, testPassword)
 	if err != nil {
 		e.t.Fatal(err)
 	}
-	return string(u.ID)
+	e.ids[token] = u.ID
+	return token
 }
 
+// id is the user ID of a token from e.user, as the API shows it.
+func (e *env) id(token string) string {
+	return string(e.ids[token])
+}
+
+// room creates a room with the users (tokens from e.user) as members.
 func (e *env) room(name string, members ...string) string {
 	e.t.Helper()
-	r, err := e.store.CreateRoom(name, 100)
+	r, err := e.store.CreateRoom(e.t.Context(), name, 100)
 	if err != nil {
 		e.t.Fatal(err)
 	}
 	for _, m := range members {
-		if err := r.Join(chat.UserID(m)); err != nil {
+		if err := r.Join(e.ids[m]); err != nil {
 			e.t.Fatal(err)
 		}
 	}
@@ -108,31 +126,46 @@ func wantCode(t *testing.T, err error, want codes.Code, what string) {
 func TestAuth(t *testing.T) {
 	e := newEnv(t)
 
-	// Public calls work without a user (CreateUser is already written).
-	u, err := e.client.CreateUser(e.as(""), &pb.CreateUserRequest{Name: "alice"})
-	wantCode(t, err, codes.OK, "CreateUser without x-user-id")
-	if u.GetId() != "u-1" || u.GetRole() != pb.Role_ROLE_MEMBER {
-		t.Errorf("CreateUser = %v, want id u-1 and ROLE_MEMBER", u)
+	// Signing up needs no session, and returns one.
+	res, err := e.client.CreateUser(e.as(""), &pb.CreateUserRequest{Name: "alice", Password: testPassword})
+	wantCode(t, err, codes.OK, "CreateUser without a session")
+	if u := res.GetUser(); u.GetName() != "alice" || u.GetRole() != pb.Role_ROLE_MEMBER || res.GetToken() == "" {
+		t.Errorf("CreateUser = %v, want alice, ROLE_MEMBER and a token", res)
 	}
-	_, err = e.client.CreateUser(e.as(""), &pb.CreateUserRequest{Name: "x"})
+	token := res.GetToken()
+	_, err = e.client.CreateUser(e.as(""), &pb.CreateUserRequest{Name: "x", Password: testPassword})
 	wantCode(t, err, codes.InvalidArgument, "CreateUser with a bad name")
+	_, err = e.client.CreateUser(e.as(""), &pb.CreateUserRequest{Name: "bobby", Password: "short"})
+	wantCode(t, err, codes.InvalidArgument, "CreateUser with a short password")
 
-	// Protected unary calls need a known user.
+	// Protected unary calls need a live session.
 	_, err = e.client.ListRooms(e.as(""), &pb.ListRoomsRequest{})
-	wantCode(t, err, codes.Unauthenticated, "ListRooms without x-user-id")
-	_, err = e.client.ListRooms(e.as("u-404"), &pb.ListRoomsRequest{})
-	wantCode(t, err, codes.Unauthenticated, "ListRooms as an unknown user")
-	_, err = e.client.ListRooms(e.as("u-1"), &pb.ListRoomsRequest{})
-	if status.Code(err) == codes.Unauthenticated {
-		t.Fatalf("ListRooms as u-1 was refused: %v", err)
-	}
+	wantCode(t, err, codes.Unauthenticated, "ListRooms without a session")
+	_, err = e.client.ListRooms(e.as("made-up-token"), &pb.ListRoomsRequest{})
+	wantCode(t, err, codes.Unauthenticated, "ListRooms with a made-up token")
+	_, err = e.client.ListRooms(e.as(token), &pb.ListRoomsRequest{})
+	wantCode(t, err, codes.OK, "ListRooms with alice's token")
 
 	// So do streaming calls. A stream's error arrives on the first Recv.
 	w, err := e.client.Watch(e.as(""), &pb.WatchRequest{RoomId: "r-1"})
 	if err == nil {
 		_, err = w.Recv()
 	}
-	wantCode(t, err, codes.Unauthenticated, "Watch without x-user-id")
+	wantCode(t, err, codes.Unauthenticated, "Watch without a session")
+
+	// Logging in gives a second session; a wrong password gives nothing.
+	_, err = e.client.Login(e.as(""), &pb.LoginRequest{Name: "alice", Password: "wrong-password"})
+	wantCode(t, err, codes.Unauthenticated, "Login with a wrong password")
+	login, err := e.client.Login(e.as(""), &pb.LoginRequest{Name: "alice", Password: testPassword})
+	wantCode(t, err, codes.OK, "Login")
+
+	// Logging out ends only the session the call was made with.
+	_, err = e.client.Logout(e.as(token), &pb.LogoutRequest{})
+	wantCode(t, err, codes.OK, "Logout")
+	_, err = e.client.ListRooms(e.as(token), &pb.ListRoomsRequest{})
+	wantCode(t, err, codes.Unauthenticated, "ListRooms after Logout")
+	_, err = e.client.ListRooms(e.as(login.GetToken()), &pb.ListRoomsRequest{})
+	wantCode(t, err, codes.OK, "ListRooms with the other session")
 }
 
 func TestCreateAndListRooms(t *testing.T) {
@@ -189,7 +222,7 @@ func TestJoinPostAndHistory(t *testing.T) {
 	for _, text := range []string{"one", "two", "three"} {
 		m, err := e.client.PostMessage(e.as(alice), &pb.PostMessageRequest{RoomId: room, Text: text})
 		wantCode(t, err, codes.OK, "post "+text)
-		if m.GetText() != text || m.GetAuthorId() != alice || m.GetRoomId() != room {
+		if m.GetText() != text || m.GetAuthorId() != e.id(alice) || m.GetRoomId() != room {
 			t.Errorf("PostMessage returned %v", m)
 		}
 	}
@@ -252,7 +285,7 @@ func TestWatch(t *testing.T) {
 	}
 
 	for _, text := range []string{"first", "second"} {
-		m, err := e.store.PostMessage(chat.RoomID(room), chat.UserID(alice), text)
+		m, err := e.store.PostMessage(e.t.Context(), chat.RoomID(room), e.ids[alice], text)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -288,7 +321,7 @@ func TestImport(t *testing.T) {
 	if sum.GetPosted() != 3 {
 		t.Errorf("posted = %d, want 3", sum.GetPosted())
 	}
-	r, _ := e.store.GetRoom(chat.RoomID(room))
+	r, _ := e.store.GetRoom(e.t.Context(), chat.RoomID(room))
 	if n := len(r.LastN(10)); n != 3 {
 		t.Errorf("room has %d messages after Import, want 3", n)
 	}
@@ -345,12 +378,12 @@ func TestConverse(t *testing.T) {
 		name string
 		c    grpc.BidiStreamingClient[pb.ConverseRequest, pb.Message]
 	}{{"alice", a}, {"bob", b}} {
-		if m := recv(t, who.c.Recv, who.name); m.GetText() != "hi bob" || m.GetAuthorId() != alice {
+		if m := recv(t, who.c.Recv, who.name); m.GetText() != "hi bob" || m.GetAuthorId() != e.id(alice) {
 			t.Errorf("%s got %v, want alice's \"hi bob\"", who.name, m)
 		}
 	}
 	say(b, "hi alice")
-	if m := recv(t, a.Recv, "alice"); m.GetText() != "hi alice" || m.GetAuthorId() != bob {
+	if m := recv(t, a.Recv, "alice"); m.GetText() != "hi alice" || m.GetAuthorId() != e.id(bob) {
 		t.Errorf("alice got %v, want bob's \"hi alice\"", m)
 	}
 	if m := recv(t, b.Recv, "bob"); m.GetText() != "hi alice" {

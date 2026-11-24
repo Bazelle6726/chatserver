@@ -1,29 +1,30 @@
 package api
 
 import (
-	"chatserver/internal/chat"
-	"chatserver/internal/store"
+	"chatserver/internal/ratelimit"
+	"chatserver/internal/service"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
 )
 
-// Auth identifies the caller from the X-User-ID header.
+// Auth identifies the caller from their session token: an
+// "Authorization: Bearer <token>" header, or the session cookie the browser
+// sends by itself (which is also how the live feed's EventSource, which
+// can't set headers, gets logged in).
 //
-// It's a function that RETURNS the middleware: a closure that captures s.
-func Auth(s store.Store) gin.HandlerFunc {
+// It's a function that RETURNS the middleware: a closure that captures svc.
+func Auth(svc *service.Service) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		id := c.GetHeader("X-User-ID") //header is read
-		if id == "" {
-			id = c.Query("user") //fallback to query param
-		} //if it's empty, or s.GetUser can't find that user, the request is stopped
-		user, err := s.GetUser(chat.UserID(id))
+		token := sessionToken(c)
+		user, err := svc.Authenticate(c.Request.Context(), token)
 		if err != nil {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "invalid user ID"})
+			writeError(c, err)
 			return
 		}
-		c.Set("user", user) //user is stored for later handlers
-		c.Next()            //runs rest of the chain
+		c.Set(userKey, user)   // for currentUser in later handlers
+		c.Set(tokenKey, token) // for logout
+		c.Next()
 	}
 }
 
@@ -48,18 +49,31 @@ func LimitBody(n int64) gin.HandlerFunc {
 	}
 }
 
-// RateLimit stops a user who makes too many requests per second.
-// It must run AFTER Auth, because it needs to know who the user is.
-func RateLimit(l *Limiter) gin.HandlerFunc {
-	return func(c *gin.Context) { // get the user
-		user := currentUser(c)
-		if !l.Allow(string(user.ID)) {
-			c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{"error": "slow down"})
+// RateLimit stops a user who makes too many requests. It must run AFTER
+// Auth, because it needs to know who the user is. A nil limiter allows all.
+func RateLimit(l *ratelimit.Limiter) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if !l.Allow(string(currentUser(c).ID)) {
+			tooMany(c)
 			return
 		}
 		c.Next()
-		// The lock lives inside Allow, so it's held for a moment, not for the whole
-		// request. Holding a lock across c.Next() would make every user wait for the
-		// slowest request.
 	}
+}
+
+// LimitByIP stops a client address that makes too many requests. It's for
+// routes without a login, where there's no user to limit. c.ClientIP() is
+// the real peer address, since Router trusts no proxy headers.
+func LimitByIP(l *ratelimit.Limiter) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if !l.Allow(c.ClientIP()) {
+			tooMany(c)
+			return
+		}
+		c.Next()
+	}
+}
+
+func tooMany(c *gin.Context) {
+	c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{"error": ratelimit.ErrLimited.Error()})
 }

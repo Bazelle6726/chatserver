@@ -33,33 +33,34 @@ func main() {
 	// A fresh name each run, so you can run it again without a 409.
 	name := fmt.Sprintf("bot%d", time.Now().Unix()%100000)
 
-	var user pb.User
-	must(call("POST", "/users", &pb.CreateUserRequest{Name: name}, "", &user))
+	var signedUp pb.AuthResponse
+	must(call("POST", "/users", &pb.CreateUserRequest{Name: name, Password: "protohttp-demo"}, "", &signedUp))
+	user, token := signedUp.GetUser(), signedUp.GetToken()
 	fmt.Printf("created user %s (%s) in protobuf\n", user.GetId(), user.GetName())
 
 	var room pb.Room
-	must(call("POST", "/rooms", &pb.CreateRoomRequest{Name: name + "-room", MaxHistory: int32(*n)}, user.GetId(), &room))
+	must(call("POST", "/rooms", &pb.CreateRoomRequest{Name: name + "-room", MaxHistory: int32(*n)}, token, &room))
 	fmt.Printf("created room %s (%s)\n", room.GetId(), room.GetName())
 
 	path := "/rooms/" + room.GetId()
-	must(call("POST", path+"/members", nil, user.GetId(), nil))
+	must(call("POST", path+"/members", nil, token, nil))
 
-	// The server allows 20 requests per second per user (the rate limiter
-	// from stage 2), so pace the posts at 15 a second.
+	// The server allows 20 requests and 20 posts a second per user, so pace
+	// the posts at 15 a second.
 	fmt.Printf("posting %d messages (about %ds)...\n", *n, *n/15+1)
 	tick := time.NewTicker(time.Second / 15)
 	defer tick.Stop()
 	for i := range *n {
 		<-tick.C
 		text := fmt.Sprintf("message %d, sent as protobuf over plain HTTP", i+1)
-		must(call("POST", path+"/messages", &pb.PostMessageRequest{Text: text}, user.GetId(), nil))
+		must(call("POST", path+"/messages", &pb.PostMessageRequest{Text: text}, token, nil))
 	}
 	fmt.Println()
 
 	// The same history, asked for in each format.
 	limit := fmt.Sprintf("?limit=%d", *n)
-	jsonBody := fetch(path+"/messages"+limit, "application/json", user.GetId())
-	protoBody := fetch(path+"/messages"+limit, mimeProto, user.GetId())
+	jsonBody := fetch(path+"/messages"+limit, "application/json", token)
+	protoBody := fetch(path+"/messages"+limit, mimeProto, token)
 
 	var asJSON []map[string]any
 	must(json.Unmarshal(jsonBody, &asJSON))
@@ -71,9 +72,9 @@ func main() {
 	fmt.Printf("  protobuf  %7d bytes  (%.0f%% of JSON)\n", len(protoBody), 100*float64(len(protoBody))/float64(len(jsonBody)))
 }
 
-// call sends body as protobuf (nil = no body) and, if out isn't nil, decodes
-// a protobuf reply into it.
-func call(method, path string, body proto.Message, user string, out proto.Message) error {
+// call sends body as protobuf (nil = no body), logged in with token ("" = not
+// logged in), and, if out isn't nil, decodes a protobuf reply into it.
+func call(method, path string, body proto.Message, token string, out proto.Message) error {
 	var data []byte
 	if body != nil {
 		var err error
@@ -89,8 +90,8 @@ func call(method, path string, body proto.Message, user string, out proto.Messag
 		req.Header.Set("Content-Type", mimeProto)
 	}
 	req.Header.Set("Accept", mimeProto)
-	if user != "" {
-		req.Header.Set("X-User-ID", user)
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
 	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -111,11 +112,11 @@ func call(method, path string, body proto.Message, user string, out proto.Messag
 	return proto.Unmarshal(reply, out)
 }
 
-func fetch(path, accept, user string) []byte {
+func fetch(path, accept, token string) []byte {
 	req, err := http.NewRequest("GET", *base+path, nil)
 	must(err)
 	req.Header.Set("Accept", accept)
-	req.Header.Set("X-User-ID", user)
+	req.Header.Set("Authorization", "Bearer "+token)
 	resp, err := http.DefaultClient.Do(req)
 	must(err)
 	defer resp.Body.Close()

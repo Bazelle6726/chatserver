@@ -1,17 +1,15 @@
 package api
 
 import (
+	"crypto/subtle"
 	"net/http"
-
 	"strings"
 	"time"
 	"unicode"
 
-	"crypto/subtle"
-
-	"chatserver/internal/chat"
-
 	"github.com/gin-gonic/gin"
+
+	"chatserver/internal/ratelimit"
 )
 
 const adminTokenHeader = "X-Admin-Token"
@@ -19,8 +17,9 @@ const adminTokenHeader = "X-Admin-Token"
 // maxWordLen is the longest banned word the admin API accepts.
 const maxWordLen = 50
 
-// Wrong admin tokens allowed per IP address before it's locked out for the
-// rest of the window. Without a limit, a script could try millions of tokens.
+// Wrong admin tokens allowed per IP address: a burst of adminMaxFailures,
+// then one more per adminFailureWindow/adminMaxFailures (12s). Without a
+// limit, a script could try millions of tokens.
 const (
 	adminMaxFailures   = 5
 	adminFailureWindow = time.Minute
@@ -29,7 +28,7 @@ const (
 // AdminOnly lets a request through only if it carries the right admin token.
 // failures counts wrong tokens per client IP; an IP that has used up its
 // allowance gets 429 without its token even being checked.
-func AdminOnly(token string, failures *Limiter) gin.HandlerFunc {
+func AdminOnly(token string, failures *ratelimit.Limiter) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if token == "" {
 			c.AbortWithStatusJSON(http.StatusNotFound, gin.H{"error": "admin API is off"})
@@ -50,8 +49,6 @@ func AdminOnly(token string, failures *Limiter) gin.HandlerFunc {
 }
 
 // GET /admin/banned-words
-//
-// TODO(76): reply 200 with gin.H{"words": a.words.Words()}
 func (a *API) listBannedWords(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"words": a.words.Words()})
 }
@@ -111,19 +108,4 @@ func (a *API) saveWords() error {
 		return nil
 	}
 	return a.words.Save(a.wordsPath)
-}
-
-// hideBanned returns messages as users should see them: any message with a
-// banned word shows as "[removed]", the same as in the live feed. It changes
-// only this copy; the store keeps the originals.
-func (a *API) hideBanned(ms []chat.Message) []chat.Message {
-	if a.words == nil {
-		return ms
-	}
-	for i := range ms {
-		if a.words.IsBanned(ms[i].Text) {
-			ms[i].Text = "[removed]"
-		}
-	}
-	return ms
 }

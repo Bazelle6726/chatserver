@@ -1,6 +1,8 @@
-// A small client for the chat server's HTTP API. Every call sends the
-// signed-in user's ID as X-User-ID; errors are thrown with the server's
-// own message ({"error": "..."}) and the HTTP status.
+// A small client for the chat server's HTTP API. The session lives in an
+// HttpOnly cookie that the server sets when you sign up or log in, and the
+// browser sends it with every request by itself, so this code never sees or
+// stores the token. Errors are thrown with the server's own message
+// ({"error": "..."}) and the HTTP status.
 
 export class ApiError extends Error {
   constructor(message, status) {
@@ -9,14 +11,14 @@ export class ApiError extends Error {
   }
 }
 
-export async function api(method, path, { body, userId, headers = {} } = {}) {
+export async function api(method, path, { body, headers = {} } = {}) {
   const h = { ...headers };
-  if (userId) h["X-User-ID"] = userId;
   if (body !== undefined) h["Content-Type"] = "application/json";
 
   const res = await fetch(path, {
     method,
     headers: h,
+    credentials: "same-origin", // send the session cookie (the default, made explicit)
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   const text = await res.text();
@@ -27,8 +29,8 @@ export async function api(method, path, { body, userId, headers = {} } = {}) {
   return data;
 }
 
-// The live feed. EventSource can't send headers, so the user ID goes in the
-// URL; the server's Auth middleware accepts ?user= for exactly this reason.
-export function watchRoom(roomId, userId) {
-  return new EventSource(`/rooms/${roomId}/stream?user=${encodeURIComponent(userId)}`);
+// The live feed. EventSource can't send headers, but it does send cookies,
+// so the session cookie logs it in.
+export function watchRoom(roomId) {
+  return new EventSource(`/rooms/${encodeURIComponent(roomId)}/stream`);
 }

@@ -1,10 +1,19 @@
 package api
 
 import (
-	"chatserver/internal/chat"
+	"context"
 	"errors"
 	"net/http"
+
+	"chatserver/internal/chat"
+	"chatserver/internal/ratelimit"
+	"chatserver/internal/service"
 )
+
+// statusClientClosedRequest is for a request whose client went away before
+// it finished (its context was cancelled). It's not in net/http: the code
+// comes from nginx. Nobody will see the response, but the log will.
+const statusClientClosedRequest = 499
 
 // statusFor turns a domain error into an HTTP status code.
 // This is the ONE place that knows how errors map to HTTP, so every
@@ -26,6 +35,16 @@ func statusFor(err error) int {
 		return http.StatusConflict
 	case errors.Is(err, chat.ErrNotMember):
 		return http.StatusForbidden
+	case errors.Is(err, service.ErrUnauthenticated), errors.Is(err, service.ErrBadCredentials):
+		return http.StatusUnauthorized
+	case errors.Is(err, service.ErrLiveOff):
+		return http.StatusServiceUnavailable
+	case errors.Is(err, ratelimit.ErrLimited):
+		return http.StatusTooManyRequests
+	case errors.Is(err, context.DeadlineExceeded):
+		return http.StatusGatewayTimeout
+	case errors.Is(err, context.Canceled):
+		return statusClientClosedRequest
 	default:
 		return http.StatusInternalServerError
 	}

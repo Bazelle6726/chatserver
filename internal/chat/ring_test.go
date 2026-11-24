@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-// TODO 73: the history as a ring buffer. Whatever the storage, LastN must
+// The history is a ring buffer. Whatever the storage, LastN must
 // always return the newest messages, oldest first.
 func TestHistoryWrapsAround(t *testing.T) {
 	const size = 4

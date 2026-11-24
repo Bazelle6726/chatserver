@@ -15,7 +15,7 @@ import (
 	"chatserver/internal/pb"
 )
 
-// --- TODOs 64-66: the three helpers, tested on their own -------------------
+// --- the three helpers, tested on their own ---------------------------------
 
 // testContext builds a Gin context for one request, without a router.
 func testContext(method, contentType, accept string, body []byte) (*gin.Context, *httptest.ResponseRecorder) {
@@ -89,10 +89,10 @@ func TestRespond(t *testing.T) {
 
 func TestBindBody(t *testing.T) {
 	// JSON: straight into req; fill must NOT run.
-	var req createUserReq
+	var req credentialsReq
 	msg := &pb.CreateUserRequest{}
 	filled := false
-	c, _ := testContext("POST", "application/json", "", []byte(`{"name":"alice"}`))
+	c, _ := testContext("POST", "application/json", "", []byte(`{"name":"alice","password":"correct-horse"}`))
 	if err := bindBody(c, &req, msg, func() { filled = true }); err != nil {
 		t.Fatalf("JSON body: %v", err)
 	}
@@ -105,7 +105,7 @@ func TestBindBody(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	req = createUserReq{}
+	req = credentialsReq{}
 	msg = &pb.CreateUserRequest{}
 	c, _ = testContext("POST", mimeProto, "", body)
 	if err := bindBody(c, &req, msg, func() { req.Name = msg.GetName() }); err != nil {
@@ -125,7 +125,7 @@ func TestBindBody(t *testing.T) {
 		{"broken protobuf", mimeProto, []byte{0xff, 0xff, 0xff}},
 	} {
 		c, _ := testContext("POST", bad.contentType, "", bad.body)
-		err := bindBody(c, &createUserReq{}, &pb.CreateUserRequest{}, func() {})
+		err := bindBody(c, &credentialsReq{}, &pb.CreateUserRequest{}, func() {})
 		var ve *chat.ValidationError
 		if !errors.As(err, &ve) || ve.Field != "body" {
 			t.Errorf("%s: got %v, want a *chat.ValidationError for field body", bad.name, err)
@@ -133,10 +133,10 @@ func TestBindBody(t *testing.T) {
 	}
 }
 
-// --- TODOs 67-68: the handlers, through the router -------------------------
+// --- the handlers, through the router ----------------------------------------
 
 // doProto sends body as protobuf (nil = no body) and asks for protobuf back.
-func (s *testServer) doProto(method, path string, body proto.Message, user string) *httptest.ResponseRecorder {
+func (s *testServer) doProto(method, path string, body proto.Message, user string) *httptest.ResponseRecorder { // user: a session token, "" = none
 	s.t.Helper()
 	var r *bytes.Reader
 	if body != nil {
@@ -154,7 +154,7 @@ func (s *testServer) doProto(method, path string, body proto.Message, user strin
 	}
 	req.Header.Set("Accept", mimeProto)
 	if user != "" {
-		req.Header.Set("X-User-ID", user)
+		req.Header.Set("Authorization", "Bearer "+user)
 	}
 	rec := httptest.NewRecorder()
 	s.router.ServeHTTP(rec, req)
@@ -175,31 +175,32 @@ func decodeProto(t *testing.T, rec *httptest.ResponseRecorder, msg proto.Message
 func TestUsersInProtobuf(t *testing.T) {
 	s := newServer(t)
 
-	rec := s.doProto("POST", "/users", &pb.CreateUserRequest{Name: "alice"}, "")
+	rec := s.doProto("POST", "/users", &pb.CreateUserRequest{Name: "alice", Password: testPassword}, "")
 	expectStatus(t, rec, http.StatusCreated, "POST /users (protobuf)")
-	var u pb.User
-	decodeProto(t, rec, &u, "POST /users")
-	if u.GetId() != "u-1" || u.GetName() != "alice" || u.GetRole() != pb.Role_ROLE_MEMBER {
-		t.Errorf("created %v, want u-1 alice ROLE_MEMBER", &u)
+	var res pb.AuthResponse
+	decodeProto(t, rec, &res, "POST /users")
+	u, token := res.GetUser(), res.GetToken()
+	if u.GetName() != "alice" || u.GetRole() != pb.Role_ROLE_MEMBER || token == "" {
+		t.Errorf("created %v, want alice ROLE_MEMBER and a token", &res)
 	}
 
-	rec = s.doProto("GET", "/users/u-1", nil, "")
-	expectStatus(t, rec, http.StatusOK, "GET /users/u-1 (protobuf)")
+	rec = s.doProto("GET", "/users/"+u.GetId(), nil, token)
+	expectStatus(t, rec, http.StatusOK, "GET /users/:id (protobuf)")
 	var got pb.User
-	decodeProto(t, rec, &got, "GET /users/u-1")
-	if !proto.Equal(&got, &u) {
-		t.Errorf("GET returned %v, want %v", &got, &u)
+	decodeProto(t, rec, &got, "GET /users/:id")
+	if !proto.Equal(&got, u) {
+		t.Errorf("GET returned %v, want %v", &got, u)
 	}
 
 	// JSON clients are unaffected.
-	rec = s.do("GET", "/users/u-1", nil, "")
-	expectStatus(t, rec, http.StatusOK, "GET /users/u-1 (JSON)")
+	rec = s.do("GET", "/users/"+u.GetId(), nil, token)
+	expectStatus(t, rec, http.StatusOK, "GET /users/:id (JSON)")
 	if d := decode[userDTO](t, rec); d.Name != "alice" {
 		t.Errorf("JSON GET returned %+v", d)
 	}
 
 	// Errors stay JSON, whatever Accept says.
-	rec = s.doProto("GET", "/users/u-404", nil, "")
+	rec = s.doProto("GET", "/users/u-404", nil, token)
 	expectStatus(t, rec, http.StatusNotFound, "GET a missing user")
 	if body := decode[map[string]any](t, rec); body["error"] == nil {
 		t.Errorf("error body = %v, want JSON with an error field", body)
@@ -244,7 +245,7 @@ func TestRoomsAndMessagesInProtobuf(t *testing.T) {
 		expectStatus(t, rec, http.StatusCreated, "post "+text)
 		var m pb.Message
 		decodeProto(t, rec, &m, "post "+text)
-		if m.GetText() != text || m.GetAuthorId() != alice || m.GetKind() != pb.MessageKind_MESSAGE_KIND_TEXT {
+		if m.GetText() != text || m.GetAuthorId() != s.idOf(alice) || m.GetKind() != pb.MessageKind_MESSAGE_KIND_TEXT {
 			t.Errorf("posted %v", &m)
 		}
 	}
@@ -262,7 +263,7 @@ func TestRoomsAndMessagesInProtobuf(t *testing.T) {
 	req := httptest.NewRequest("POST", path+"/messages", strings.NewReader(`{"text":"mixed"}`))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", mimeProto)
-	req.Header.Set("X-User-ID", alice)
+	req.Header.Set("Authorization", "Bearer "+alice)
 	rec = httptest.NewRecorder()
 	s.router.ServeHTTP(rec, req)
 	expectStatus(t, rec, http.StatusCreated, "JSON in, protobuf out")

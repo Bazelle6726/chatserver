@@ -6,7 +6,3 @@ package chat
 type UserID string
 type RoomID string
 type MessageID string
-
-// Type alias.
-// Payload IS a []byte - no conversion needed. Used later for protobuf bytes.
-type Payload = []byte

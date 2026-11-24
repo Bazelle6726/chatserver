@@ -1,9 +1,13 @@
 package grpcapi
 
 import (
-	"chatserver/internal/chat"
+	"context"
 	"errors"
-	"log"
+	"log/slog"
+
+	"chatserver/internal/chat"
+	"chatserver/internal/ratelimit"
+	"chatserver/internal/service"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -27,9 +31,19 @@ func toStatus(err error) error {
 		return status.Error(codes.AlreadyExists, err.Error())
 	case errors.Is(err, chat.ErrNotMember):
 		return status.Error(codes.PermissionDenied, err.Error())
+	case errors.Is(err, service.ErrUnauthenticated), errors.Is(err, service.ErrBadCredentials):
+		return status.Error(codes.Unauthenticated, err.Error())
+	case errors.Is(err, service.ErrLiveOff):
+		return status.Error(codes.Unavailable, err.Error())
+	case errors.Is(err, ratelimit.ErrLimited):
+		return status.Error(codes.ResourceExhausted, err.Error())
+	case errors.Is(err, context.Canceled):
+		return status.Error(codes.Canceled, err.Error())
+	case errors.Is(err, context.DeadlineExceeded):
+		return status.Error(codes.DeadlineExceeded, err.Error())
 	default:
 		// The server's own fault: log the details, don't send them.
-		log.Printf("internal error: %v", err)
+		slog.Error("internal error", "err", err)
 		return status.Error(codes.Internal, "internal error")
 	}
 }

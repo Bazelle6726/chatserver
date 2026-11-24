@@ -15,7 +15,7 @@ import (
 //   - with go test -race: "WARNING: DATA RACE" and the test fails.
 //
 // If it times out instead, a method probably locks the mutex and then calls
-// another method that tries to lock it again (see TODO 36 in the README).
+// another method that tries to lock it again.
 func TestRoomConcurrentAccess(t *testing.T) {
 	r := NewRoom("r-1", "general", 50)
 	const users = 20
@@ -41,7 +41,6 @@ func TestRoomConcurrentAccess(t *testing.T) {
 					_ = r.LastN(5)
 					_ = r.IsMember(id)
 					_ = r.MemberCount()
-					_ = r.SettingsCopy()
 				}
 			}()
 		}

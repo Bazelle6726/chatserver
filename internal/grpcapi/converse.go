@@ -22,9 +22,6 @@ import (
 //   - a new goroutine is the only one calling stream.Recv (and posting)
 //   - this goroutine is the only one calling stream.Send
 func (s *Server) Converse(stream grpc.BidiStreamingServer[pb.ConverseRequest, pb.Message]) error {
-	if s.hub == nil {
-		return status.Error(codes.Unavailable, "live delivery is off")
-	}
 	ctx := stream.Context()
 	user := currentUser(ctx)
 
@@ -41,17 +38,11 @@ func (s *Server) Converse(stream grpc.BidiStreamingServer[pb.ConverseRequest, pb
 	if roomID == "" {
 		return status.Error(codes.InvalidArgument, "the first message must set join_room_id")
 	}
-	room, err := s.store.GetRoom(chat.RoomID(roomID))
+	client, leave, err := s.svc.JoinAndWatch(ctx, user.ID, chat.RoomID(roomID)) // joins first if needed
 	if err != nil {
 		return toStatus(err)
 	}
-	if !room.IsMember(user.ID) {
-		if err := room.Join(user.ID); err != nil {
-			return toStatus(err)
-		}
-	}
-	client := s.hub.Join(user.ID, room.ID)
-	defer s.hub.Leave(client)
+	defer leave()
 	if err := stream.SendHeader(metadata.Pairs("x-watching", roomID)); err != nil {
 		return err
 	}
@@ -64,7 +55,7 @@ func (s *Server) Converse(stream grpc.BidiStreamingServer[pb.ConverseRequest, pb
 				recvErr <- err // includes io.EOF: the client closed its side
 				return
 			}
-			if _, err := s.post(user.ID, roomID, req.GetText()); err != nil {
+			if _, err := s.svc.PostMessage(ctx, user.ID, chat.RoomID(roomID), req.GetText()); err != nil {
 				recvErr <- toStatus(err)
 				return
 			}
