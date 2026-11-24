@@ -42,6 +42,7 @@ func Message(m chat.Message) *pb.Message {
 		Id:                 string(m.ID),
 		RoomId:             string(m.Room),
 		AuthorId:           string(m.Author),
+		AuthorName:         m.AuthorName,
 		Kind:               pb.MessageKind(m.Kind),
 		Text:               m.Text,
 		CreatedAtUnixMilli: m.CreatedAt.UnixMilli(),

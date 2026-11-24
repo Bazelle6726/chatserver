@@ -68,6 +68,7 @@ message Message {
   MessageKind kind = 4;
   string text = 5;
   int64 created_at_unix_milli = 6; // milliseconds since 1 Jan 1970 (UTC)
+  string author_name = 7;          // the author's name when posted
 }
 
 // Every call gets its own request and response type, even when it's empty

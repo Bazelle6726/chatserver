@@ -41,12 +41,12 @@ func TestToMessageDTO(t *testing.T) {
 	m := chat.Message{
 		Meta:   chat.Meta{ID: "m-7", CreatedAt: at},
 		Room:   "r-1",
-		Author: "u-2",
-		Kind:   chat.KindText,
-		Text:   "hello",
+		Author: "u-2", AuthorName: "bob",
+		Kind: chat.KindText,
+		Text: "hello",
 	}
 	got := toMessageDTO(m)
-	want := messageDTO{ID: "m-7", Room: "r-1", Author: "u-2", Kind: "text", Text: "hello", CreatedAt: at}
+	want := messageDTO{ID: "m-7", Room: "r-1", Author: "u-2", AuthorName: "bob", Kind: "text", Text: "hello", CreatedAt: at}
 	if got != want {
 		t.Errorf("toMessageDTO =\n %+v\nwant\n %+v", got, want)
 	}

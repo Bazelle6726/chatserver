@@ -215,11 +215,12 @@ func (s *MemoryStore) PostMessage(ctx context.Context, roomID chat.RoomID, autho
 		return chat.Message{}, err
 	}
 	msg := chat.Message{
-		Room:   room.ID,
-		Author: user.ID,
-		Text:   text,
-		Kind:   chat.KindText,
-		Meta:   chat.Meta{ID: chat.MessageID(s.nextMsgID()), CreatedAt: s.now()},
+		Room:       room.ID,
+		Author:     user.ID,
+		AuthorName: user.Name,
+		Text:       text,
+		Kind:       chat.KindText,
+		Meta:       chat.Meta{ID: chat.MessageID(s.nextMsgID()), CreatedAt: s.now()},
 	}
 	if err := room.AddMessage(msg); err != nil {
 		return chat.Message{}, err

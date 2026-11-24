@@ -40,9 +40,9 @@ func TestConvert(t *testing.T) {
 	}
 
 	at := time.Date(2026, 11, 4, 9, 30, 0, 0, time.UTC)
-	m := chat.Message{Meta: chat.Meta{ID: "m-5", CreatedAt: at}, Room: "r-3", Author: "u-7", Kind: chat.KindText, Text: "hi"}
+	m := chat.Message{Meta: chat.Meta{ID: "m-5", CreatedAt: at}, Room: "r-3", Author: "u-7", AuthorName: "bob", Kind: chat.KindText, Text: "hi"}
 	pm := Message(m)
-	if pm.GetId() != "m-5" || pm.GetRoomId() != "r-3" || pm.GetAuthorId() != "u-7" || pm.GetText() != "hi" {
+	if pm.GetId() != "m-5" || pm.GetRoomId() != "r-3" || pm.GetAuthorId() != "u-7" || pm.GetAuthorName() != "bob" || pm.GetText() != "hi" {
 		t.Errorf("Message = %v", pm)
 	}
 	if pm.GetKind() != pb.MessageKind_MESSAGE_KIND_TEXT {

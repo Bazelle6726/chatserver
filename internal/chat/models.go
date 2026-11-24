@@ -16,9 +16,10 @@ type User struct {
 }
 
 type Message struct {
-	Meta   // embedded by value: small, always present
-	Room   RoomID
-	Author UserID
-	Kind   MessageKind
-	Text   string
+	Meta       // embedded by value: small, always present
+	Room       RoomID
+	Author     UserID
+	AuthorName string // the author's name when posted, so clients needn't look it up
+	Kind       MessageKind
+	Text       string
 }

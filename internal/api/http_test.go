@@ -278,7 +278,7 @@ func TestJoinAndPost(t *testing.T) {
 	rec = s.do("POST", "/rooms/"+r+"/messages", map[string]string{"text": "hello gophers"}, u)
 	expectStatus(t, rec, http.StatusCreated, "post")
 	m := decode[messageDTO](t, rec)
-	if m.ID == "" || m.Room != r || m.Author != s.idOf(u) || m.Kind != "text" || m.Text != "hello gophers" || m.CreatedAt.IsZero() {
+	if m.ID == "" || m.Room != r || m.Author != s.idOf(u) || m.AuthorName != "alice" || m.Kind != "text" || m.Text != "hello gophers" || m.CreatedAt.IsZero() {
 		t.Errorf("message = %+v", m)
 	}
 

@@ -273,6 +273,7 @@ type Message struct {
 	Kind               MessageKind            `protobuf:"varint,4,opt,name=kind,proto3,enum=chat.v1.MessageKind" json:"kind,omitempty"`
 	Text               string                 `protobuf:"bytes,5,opt,name=text,proto3" json:"text,omitempty"`
 	CreatedAtUnixMilli int64                  `protobuf:"varint,6,opt,name=created_at_unix_milli,json=createdAtUnixMilli,proto3" json:"created_at_unix_milli,omitempty"` // milliseconds since 1 Jan 1970 (UTC)
+	AuthorName         string                 `protobuf:"bytes,7,opt,name=author_name,json=authorName,proto3" json:"author_name,omitempty"`                              // the author's name when posted
 	unknownFields      protoimpl.UnknownFields
 	sizeCache          protoimpl.SizeCache
 }
@@ -347,6 +348,13 @@ func (x *Message) GetCreatedAtUnixMilli() int64 {
 		return x.CreatedAtUnixMilli
 	}
 	return 0
+}
+
+func (x *Message) GetAuthorName() string {
+	if x != nil {
+		return x.AuthorName
+	}
+	return ""
 }
 
 type CreateUserRequest struct {
@@ -1167,14 +1175,16 @@ const file_internal_pb_chat_proto_rawDesc = "" +
 	"\x04Room\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12\x18\n" +
-	"\amembers\x18\x03 \x01(\x05R\amembers\"\xc0\x01\n" +
+	"\amembers\x18\x03 \x01(\x05R\amembers\"\xe1\x01\n" +
 	"\aMessage\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x17\n" +
 	"\aroom_id\x18\x02 \x01(\tR\x06roomId\x12\x1b\n" +
 	"\tauthor_id\x18\x03 \x01(\tR\bauthorId\x12(\n" +
 	"\x04kind\x18\x04 \x01(\x0e2\x14.chat.v1.MessageKindR\x04kind\x12\x12\n" +
 	"\x04text\x18\x05 \x01(\tR\x04text\x121\n" +
-	"\x15created_at_unix_milli\x18\x06 \x01(\x03R\x12createdAtUnixMilli\"C\n" +
+	"\x15created_at_unix_milli\x18\x06 \x01(\x03R\x12createdAtUnixMilli\x12\x1f\n" +
+	"\vauthor_name\x18\a \x01(\tR\n" +
+	"authorName\"C\n" +
 	"\x11CreateUserRequest\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x1a\n" +
 	"\bpassword\x18\x02 \x01(\tR\bpassword\">\n" +
