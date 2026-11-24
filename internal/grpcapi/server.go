@@ -30,12 +30,48 @@ type Server struct {
 	store   store.Store
 	hub     *hub.Hub             // nil = no live delivery (Watch and Converse refuse)
 	publish func(m chat.Message) // nil = don't publish (e.g. in some tests)
+	banned  func(string) bool    // nil = no moderation of History
 }
 
 // New builds the gRPC server. In main, publish is the worker pool's Submit,
 // exactly as for the HTTP API.
 func New(s store.Store, h *hub.Hub, publish func(chat.Message)) *Server {
 	return &Server{store: s, hub: h, publish: publish}
+}
+
+// WithModeration makes History show messages with a banned word as
+// "[removed]", the same as the live feed and the HTTP API. In main, banned is
+// the moderation list's IsBanned method.
+func (s *Server) WithModeration(banned func(string) bool) *Server {
+	s.banned = banned
+	return s
+}
+
+// memberRoom looks up a room and checks user has joined it. Reading a room
+// (History, Watch) needs membership, the same as posting to it.
+func (s *Server) memberRoom(user chat.UserID, id string) (*chat.Room, error) {
+	room, err := s.store.GetRoom(chat.RoomID(id))
+	if err != nil {
+		return nil, err
+	}
+	if !room.IsMember(user) {
+		return nil, chat.ErrNotMember
+	}
+	return room, nil
+}
+
+// hideBanned replaces the text of banned messages in ms. ms must be a copy
+// (room.LastN returns one), so the store keeps the originals.
+func (s *Server) hideBanned(ms []chat.Message) []chat.Message {
+	if s.banned == nil {
+		return ms
+	}
+	for i := range ms {
+		if s.banned(ms[i].Text) {
+			ms[i].Text = "[removed]"
+		}
+	}
+	return ms
 }
 
 // post stores a message and hands it to the live feed. PostMessage, Import and

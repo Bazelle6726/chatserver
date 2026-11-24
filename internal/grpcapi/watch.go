@@ -1,7 +1,6 @@
 package grpcapi
 
 import (
-	"chatserver/internal/chat"
 	"chatserver/internal/pb"
 	"chatserver/internal/pbconv"
 
@@ -16,11 +15,14 @@ import (
 // message to the client.
 func (s *Server) Watch(req *pb.WatchRequest, stream grpc.ServerStreamingServer[pb.Message]) error {
 
-	room, err := s.store.GetRoom(chat.RoomID(req.GetRoomId()))
+	if s.hub == nil {
+		return status.Error(codes.Unavailable, "live delivery is off")
+	}
+	ctx := stream.Context()
+	room, err := s.memberRoom(currentUser(ctx).ID, req.GetRoomId()) // only members may watch
 	if err != nil {
 		return toStatus(err)
 	}
-	ctx := stream.Context()
 	client := s.hub.Join(currentUser(ctx).ID, room.ID)
 	defer s.hub.Leave(client)
 	stream.SendHeader(metadata.Pairs("x-watching", string(room.ID)))

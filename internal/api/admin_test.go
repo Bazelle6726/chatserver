@@ -3,6 +3,8 @@ package api
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -10,6 +12,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/gin-gonic/gin"
 
 	"chatserver/internal/moderation"
 	"chatserver/internal/store"
@@ -134,4 +138,34 @@ func TestRemoveBannedWord(t *testing.T) {
 func TestNoAdminRoutesWithoutModeration(t *testing.T) {
 	s := newServer(t) // plain API, no WithModeration
 	expectStatus(t, s.do("GET", "/admin/banned-words", nil, ""), http.StatusNotFound, "admin route on an API without moderation")
+}
+
+// A client that keeps guessing the admin token is locked out, even if it
+// then guesses right, and a forged X-Forwarded-For doesn't get it a new IP.
+func TestAdminLockout(t *testing.T) {
+	s := newAdminServer(t, "s3cret")
+	for i := range adminMaxFailures {
+		expectStatus(t, s.do("GET", "/admin/banned-words", nil, "wrong"), http.StatusUnauthorized, fmt.Sprintf("wrong guess %d", i+1))
+	}
+	expectStatus(t, s.do("GET", "/admin/banned-words", nil, "s3cret"), http.StatusTooManyRequests, "right token after too many wrong ones")
+
+	req := httptest.NewRequest("GET", "/admin/banned-words", nil)
+	req.Header.Set("X-Admin-Token", "wrong")
+	req.Header.Set("X-Forwarded-For", "203.0.113.7") // pretend to be someone else
+	rec := httptest.NewRecorder()
+	s.router.ServeHTTP(rec, req)
+	expectStatus(t, rec, http.StatusTooManyRequests, "same client with a forged X-Forwarded-For")
+}
+
+// A 500 must not send the internal error's details to the client.
+func TestInternalErrorsAreHidden(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	r.GET("/boom", func(c *gin.Context) { writeError(c, errors.New(`open C:\secret\path: access denied`)) })
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, httptest.NewRequest("GET", "/boom", nil))
+	expectStatus(t, rec, http.StatusInternalServerError, "internal error")
+	if strings.Contains(rec.Body.String(), "secret") {
+		t.Errorf("500 body leaks the internal error: %s", rec.Body.String())
+	}
 }

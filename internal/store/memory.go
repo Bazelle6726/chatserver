@@ -2,6 +2,7 @@ package store
 
 import (
 	"chatserver/internal/chat"
+	"chatserver/internal/textnorm"
 	"fmt"
 	"slices"
 	"strings"
@@ -9,11 +10,18 @@ import (
 	"time"
 )
 
-// MemoryStore keeps everything in maps. mu protects both maps.
+// MemoryStore keeps everything in maps. mu protects all four maps.
+//
+// userNames and roomNames are indexes keyed by each name's skeleton
+// (textnorm.Skeleton), so a duplicate check is one map lookup instead of a
+// scan of every user, and "Alice", "ALICE" and "аlice" (Cyrillic а) all
+// count as the same name.
 type MemoryStore struct {
 	mu         sync.RWMutex
 	users      map[chat.UserID]*chat.User
 	rooms      map[chat.RoomID]*chat.Room
+	userNames  map[string]chat.UserID
+	roomNames  map[string]chat.RoomID
 	nextUserID func() string
 	nextRoomID func() string
 	nextMsgID  func() string
@@ -38,6 +46,8 @@ func NewMemoryStore(opts ...Option) *MemoryStore {
 	s := &MemoryStore{
 		users:      make(map[chat.UserID]*chat.User),
 		rooms:      make(map[chat.RoomID]*chat.Room),
+		userNames:  make(map[string]chat.UserID),
+		roomNames:  make(map[string]chat.RoomID),
 		nextUserID: NewIDGenerator("u"),
 		nextRoomID: NewIDGenerator("r"),
 		nextMsgID:  NewIDGenerator("m"),
@@ -52,7 +62,8 @@ func NewMemoryStore(opts ...Option) *MemoryStore {
 // CreateUser validates the name and stores a new RoleMember user.
 //
 //   - validated with chat.ValidateName and returns the error as-is
-//   - returns chat.ErrAlreadyExists if another user already has this name
+//   - returns chat.ErrAlreadyExists if another user already has this name, or
+//     one that looks the same (see the userNames index)
 //     (wrap it with context: fmt.Errorf("user %q: %w", name, chat.ErrAlreadyExists))
 //   - otherwise the user is created with an ID from nextUserID, stores it, returns it
 func (s *MemoryStore) CreateUser(name string) (*chat.User, error) {
@@ -61,10 +72,9 @@ func (s *MemoryStore) CreateUser(name string) (*chat.User, error) {
 	if err := chat.ValidateName(name); err != nil {
 		return nil, err
 	}
-	for _, user := range s.users {
-		if user.Name == name {
-			return nil, chat.ErrAlreadyExists
-		}
+	key := textnorm.Skeleton(name)
+	if _, taken := s.userNames[key]; taken {
+		return nil, fmt.Errorf("user %q: %w", name, chat.ErrAlreadyExists)
 	}
 	user := &chat.User{
 		ID:   chat.UserID(s.nextUserID()),
@@ -72,6 +82,7 @@ func (s *MemoryStore) CreateUser(name string) (*chat.User, error) {
 		Role: chat.RoleMember,
 	}
 	s.users[user.ID] = user
+	s.userNames[key] = user.ID
 	return user, nil
 }
 
@@ -92,13 +103,13 @@ func (s *MemoryStore) CreateRoom(name string, maxHistory int) (*chat.Room, error
 	if err := chat.ValidateName(name); err != nil {
 		return nil, err
 	}
-	for _, room := range s.rooms {
-		if room.Name == name {
-			return nil, fmt.Errorf("room %q: %w", name, chat.ErrAlreadyExists)
-		}
+	key := textnorm.Skeleton(name)
+	if _, taken := s.roomNames[key]; taken {
+		return nil, fmt.Errorf("room %q: %w", name, chat.ErrAlreadyExists)
 	}
 	room := chat.NewRoom(chat.RoomID(s.nextRoomID()), name, maxHistory)
 	s.rooms[room.ID] = room
+	s.roomNames[key] = room.ID
 	return room, nil
 }
 

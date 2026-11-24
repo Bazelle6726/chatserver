@@ -52,11 +52,12 @@ func NewHub(buffer int) *Hub {
 // Run is the hub's loop. Start it once, in its own goroutine: go h.Run(ctx).
 // It returns when ctx is cancelled.
 func (h *Hub) Run(ctx context.Context) {
+	// Tells Join/Leave/Publish the hub has stopped. It must be the FIRST line:
+	// a defer only counts once it has run, so a defer placed after the loop
+	// is skipped by the `return` below, and then every later Leave or Publish
+	// waits forever.
+	defer close(h.done)
 	for {
-		if ctx.Err() != nil {
-			h.closeAll()
-			break
-		}
 		select {
 		case c := <-h.register:
 			h.add(c) //a client arrives on register
@@ -69,7 +70,6 @@ func (h *Hub) Run(ctx context.Context) {
 			return
 		}
 	}
-	defer close(h.done) // tells Join/Leave/Publish the hub has stopped
 }
 
 // add puts c into its room's set, creating the set if needed.

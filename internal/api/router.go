@@ -8,7 +8,14 @@ import "github.com/gin-gonic/gin"
 // of the whole server crashing. Logger prints one line per request.
 func (a *API) Router() *gin.Engine {
 	r := gin.New()
-	r.Use(gin.Recovery(), gin.Logger())
+	// Trust no proxies: c.ClientIP() is then the real peer address. By default
+	// Gin believes any X-Forwarded-For header, so a client could claim a new
+	// IP on every request and dodge the per-IP admin lockout. Behind a real
+	// reverse proxy, list its address here instead.
+	if err := r.SetTrustedProxies(nil); err != nil {
+		panic(err) // can't happen with nil
+	}
+	r.Use(gin.Recovery(), gin.Logger(), LimitBody(MaxBodyBytes))
 	//Public (anyone can call these):
 	r.POST("/users", a.createUser)
 	r.GET("/users/:id", a.getUser)
@@ -27,7 +34,8 @@ func (a *API) Router() *gin.Engine {
 	}
 
 	if a.words != nil {
-		admin := r.Group("/admin", AdminOnly(a.adminToken))
+		failures := NewLimiterPer(adminMaxFailures, adminFailureWindow, nil)
+		admin := r.Group("/admin", AdminOnly(a.adminToken, failures))
 		admin.GET("/banned-words", a.listBannedWords)
 		admin.POST("/banned-words", a.addBannedWord)
 		admin.DELETE("/banned-words/:word", a.removeBannedWord)

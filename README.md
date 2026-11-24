@@ -52,7 +52,7 @@ Open **http://localhost:8080/** in two windows, a normal one and a private one, 
 2. **Window 2:** create `bob`, then click `general`.
 3. **Chat:** messages appear instantly in both. "cheap scam here" shows as *[removed]*, but "scampi" doesn't.
 
-To use the **admin API** and the app's Moderation panel, set a secret token before starting the server:
+To use the **admin API** and the app's Moderation panel, set a secret token of at least 16 characters before starting the server:
 
 ```powershell
 $env:CHAT_ADMIN_TOKEN = "pick-a-long-secret"   # PowerShell
@@ -103,6 +103,7 @@ chatserver/
     ├── pb/            chat.proto and the generated code
     ├── pbconv/        domain types to protobuf
     ├── moderation/    the banned-word list
+    ├── textnorm/      folds look-alike text, for moderation and unique names
     └── hub/           live delivery: the hub and the worker pool
 ```
 

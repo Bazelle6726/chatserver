@@ -68,7 +68,7 @@ func TestRun(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, p := range posters {
+	for _, p := range append(posters, watchers...) { // watching needs membership too
 		if err := room.Join(chat.UserID(p)); err != nil {
 			t.Fatal(err)
 		}

@@ -55,7 +55,9 @@ func TestCanModerate(t *testing.T) {
 
 func TestValidateName(t *testing.T) {
 	valid := []string{"bob", "alice_99", "go-gophers", "Zoë", strings.Repeat("a", MaxNameLen)}
-	invalid := []string{"", "ab", "has space", "semi;colon", strings.Repeat("a", MaxNameLen+1)}
+	invalid := []string{"", "ab", "has space", "semi;colon", strings.Repeat("a", MaxNameLen+1),
+		"pаypal", // Cyrillic а among Latin letters
+	}
 
 	for _, name := range valid {
 		if err := ValidateName(name); err != nil {

@@ -169,3 +169,31 @@ func TestShutdownClosesEveryone(t *testing.T) {
 		t.Fatal("Publish/Join/Leave blocked after the hub stopped")
 	}
 }
+
+// The test above usually cancels while Run is still busy with the last Join.
+// This one waits until Run is idle in its select, the common case in
+// production, where Ctrl+C arrives long after the last event.
+func TestShutdownWhileIdle(t *testing.T) {
+	h := NewHub(4)
+	ctx, cancel := context.WithCancel(context.Background())
+	ran := make(chan struct{})
+	go func() {
+		h.Run(ctx)
+		close(ran)
+	}()
+	time.Sleep(20 * time.Millisecond) // let Run settle in its select
+	cancel()
+	<-ran
+
+	done := make(chan struct{})
+	go func() {
+		h.Publish(msg("r-1", "late"))
+		h.Leave(h.Join("u-1", "r-1"))
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(wait):
+		t.Fatal("Publish/Join/Leave blocked after an idle hub stopped")
+	}
+}

@@ -14,7 +14,10 @@ import (
 // errors wrapped with %w):
 func statusFor(err error) int {
 	var ve *chat.ValidationError
+	var tooBig *http.MaxBytesError
 	switch {
+	case errors.As(err, &tooBig):
+		return http.StatusRequestEntityTooLarge
 	case errors.As(err, &ve):
 		return http.StatusBadRequest
 	case errors.Is(err, chat.ErrUserNotFound), errors.Is(err, chat.ErrRoomNotFound):
@@ -32,4 +35,15 @@ func statusFor(err error) int {
 // know about, like a bad ?limit= value.
 func invalid(field, reason string) error {
 	return &chat.ValidationError{Field: field, Reason: reason}
+}
+
+// bodyError turns a failure to read or decode the request body into an
+// error for writeError: a body over the LimitBody cap stays as it is (so
+// statusFor answers 413), anything else is a 400 for the "body" field.
+func bodyError(err error) error {
+	var tooBig *http.MaxBytesError
+	if errors.As(err, &tooBig) {
+		return err
+	}
+	return invalid("body", err.Error())
 }

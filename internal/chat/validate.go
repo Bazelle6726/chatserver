@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strings"
 	"unicode"
+
+	"chatserver/internal/textnorm"
 )
 
 const (
@@ -32,6 +34,14 @@ func ValidateName(name string) error {
 				Field:  "name",
 				Reason: "name can only contain letters, digits, hyphens, or underscores",
 			}
+		}
+	}
+	// "pаypal" with a Cyrillic а looks exactly like "paypal". A name may use
+	// any one of Latin, Cyrillic or Greek, but not a mix.
+	if textnorm.MixedScripts(name) {
+		return &ValidationError{
+			Field:  "name",
+			Reason: "name can't mix Latin, Cyrillic and Greek letters",
 		}
 	}
 	return nil

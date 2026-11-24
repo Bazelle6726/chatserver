@@ -46,13 +46,13 @@ func respond(c *gin.Context, code int, dto any, msg proto.Message) {
 func bindBody(c *gin.Context, req any, msg proto.Message, fill func()) error {
 	if !isProto(c.ContentType()) {
 		if err := c.ShouldBindJSON(req); err != nil {
-			return invalid("body", err.Error())
+			return bodyError(err)
 		}
 		return nil
 	}
 	data, err := c.GetRawData()
 	if err != nil {
-		return invalid("body", err.Error())
+		return bodyError(err)
 	}
 	if err := proto.Unmarshal(data, msg); err != nil {
 		return invalid("body", err.Error())

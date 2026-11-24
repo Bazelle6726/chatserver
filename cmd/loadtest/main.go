@@ -59,7 +59,8 @@ func main() {
 	report(res, len(cfg.Watchers))
 }
 
-// setup creates the users and the room, and makes every poster a member.
+// setup creates the users and the room, and makes every poster and watcher
+// a member.
 // Names get a fresh tag each run, so you can run it again without clashes.
 func setup(ctx context.Context, client pb.ChatServiceClient, posters, watchers, history int) (Config, error) {
 	tag := fmt.Sprintf("lt%d", time.Now().Unix()%1000000)
@@ -92,7 +93,8 @@ func setup(ctx context.Context, client pb.ChatServiceClient, posters, watchers, 
 		return cfg, err
 	}
 	cfg.Room = room.GetId()
-	for _, p := range cfg.Posters {
+	// Posting AND watching need membership.
+	for _, p := range append(slices.Clone(cfg.Posters), cfg.Watchers...) {
 		if _, err := client.JoinRoom(as(ctx, p), &pb.JoinRoomRequest{RoomId: cfg.Room}); err != nil {
 			return cfg, err
 		}

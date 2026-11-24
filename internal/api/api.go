@@ -6,6 +6,8 @@ package api
 import (
 	"errors"
 	"io/fs"
+	"log"
+	"net/http"
 
 	"github.com/gin-gonic/gin"
 
@@ -72,13 +74,23 @@ func (a *API) WithWeb(fsys fs.FS) *API {
 // request. Validation errors also say which field was wrong:
 //
 //	{"error": "invalid name: too short", "field": "name"}
+//
+// A 500 is the server's own fault, and its error can hold details a client
+// has no business seeing (file paths, internal state). So the client gets a
+// plain "internal error" and the real one goes to the server log.
 func writeError(c *gin.Context, err error) {
+	status := statusFor(err)
+	if status == http.StatusInternalServerError {
+		log.Printf("internal error: %s %s: %v", c.Request.Method, c.FullPath(), err)
+		c.AbortWithStatusJSON(status, gin.H{"error": "internal error"})
+		return
+	}
 	body := gin.H{"error": err.Error()}
 	var ve *chat.ValidationError
 	if errors.As(err, &ve) {
 		body["field"] = ve.Field
 	}
-	c.AbortWithStatusJSON(statusFor(err), body)
+	c.AbortWithStatusJSON(status, body)
 }
 
 // userKey is where the Auth middleware stores the logged-in user.
