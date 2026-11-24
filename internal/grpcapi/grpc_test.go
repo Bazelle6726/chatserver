@@ -19,6 +19,7 @@ import (
 	"chatserver/internal/chat"
 	"chatserver/internal/hub"
 	"chatserver/internal/pb"
+	"chatserver/internal/service"
 	"chatserver/internal/store"
 )
 
@@ -43,8 +44,9 @@ func newEnv(t *testing.T) *env {
 		e.published.Add(1)
 		e.hub.Publish(m)
 	}
-	gs := grpc.NewServer(grpc.UnaryInterceptor(UnaryAuth(e.store)), grpc.StreamInterceptor(StreamAuth(e.store)))
-	pb.RegisterChatServiceServer(gs, New(e.store, e.hub, publish))
+	svc := service.New(e.store).WithHub(e.hub, publish)
+	gs := grpc.NewServer(grpc.UnaryInterceptor(UnaryAuth(svc)), grpc.StreamInterceptor(StreamAuth(svc)))
+	pb.RegisterChatServiceServer(gs, New(svc))
 	lis := bufconn.Listen(1 << 20)
 	go gs.Serve(lis)
 

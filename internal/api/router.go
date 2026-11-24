@@ -20,7 +20,7 @@ func (a *API) Router() *gin.Engine {
 	r.POST("/users", a.createUser)
 	r.GET("/users/:id", a.getUser)
 	// and registered on authed instead of r:
-	auth := r.Group("/", Auth(a.store), RateLimit(a.limiter))
+	auth := r.Group("/", Auth(a.svc), RateLimit(a.limiter))
 	auth.POST("/rooms", a.createRoom)
 	auth.GET("/rooms", a.listRooms)
 	auth.POST("/rooms/:id/members", a.joinRoom)

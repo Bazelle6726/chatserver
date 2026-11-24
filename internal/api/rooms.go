@@ -1,25 +1,22 @@
 package api
 
 import (
-	"chatserver/internal/chat"
-	"chatserver/internal/pb"
-	"chatserver/internal/pbconv"
 	"net/http"
 	"strconv"
 
 	"github.com/gin-gonic/gin"
+
+	"chatserver/internal/chat"
+	"chatserver/internal/pb"
+	"chatserver/internal/pbconv"
 )
 
-const (
-	defaultMaxHistory = 100
-	maxMaxHistory     = 1000
-	defaultLimit      = "50"
-	maxLimit          = 500
-)
+// The handlers below only translate HTTP into service calls and back. The
+// rules (defaults, limits, who may do what) are in package service.
 
 type createRoomReq struct {
 	Name       string `json:"name" binding:"required"`
-	MaxHistory int    `json:"max_history"`
+	MaxHistory int    `json:"max_history"` // 0 = the default
 }
 
 // POST /rooms (logged in)
@@ -34,14 +31,7 @@ func (a *API) createRoom(c *gin.Context) {
 		writeError(c, err)
 		return
 	}
-	if req.MaxHistory == 0 {
-		req.MaxHistory = defaultMaxHistory
-	}
-	if req.MaxHistory < 0 || req.MaxHistory > maxMaxHistory {
-		writeError(c, invalid("max_history", "must be 1-1000"))
-		return
-	}
-	room, err := a.store.CreateRoom(c.Request.Context(), req.Name, req.MaxHistory)
+	room, err := a.svc.CreateRoom(c.Request.Context(), req.Name, req.MaxHistory)
 	if err != nil {
 		writeError(c, err)
 		return
@@ -51,7 +41,7 @@ func (a *API) createRoom(c *gin.Context) {
 
 // GET /rooms (logged in)
 func (a *API) listRooms(c *gin.Context) {
-	rooms, err := a.store.ListRooms(c.Request.Context())
+	rooms, err := a.svc.ListRooms(c.Request.Context())
 	if err != nil {
 		writeError(c, err)
 		return
@@ -67,12 +57,7 @@ func (a *API) listRooms(c *gin.Context) {
 
 // POST /rooms/:id/members (logged in) - the current user joins the room.
 func (a *API) joinRoom(c *gin.Context) {
-	room, err := a.store.GetRoom(c.Request.Context(), chat.RoomID(c.Param("id")))
-	if err != nil {
-		writeError(c, err)
-		return
-	}
-	if err := room.Join(currentUser(c).ID); err != nil {
+	if err := a.svc.JoinRoom(c.Request.Context(), currentUser(c).ID, roomParam(c)); err != nil {
 		writeError(c, err)
 		return
 	}
@@ -83,7 +68,7 @@ type postMessageReq struct {
 	Text string `json:"text" binding:"required"`
 }
 
-// POST /rooms/:id/messages (logged in)
+// POST /rooms/:id/messages (logged in, member)
 func (a *API) postMessage(c *gin.Context) {
 	var req postMessageReq
 	msg := &pb.PostMessageRequest{}
@@ -91,44 +76,35 @@ func (a *API) postMessage(c *gin.Context) {
 		writeError(c, err)
 		return
 	}
-	posted, err := a.store.PostMessage(c.Request.Context(), chat.RoomID(c.Param("id")), currentUser(c).ID, req.Text)
+	posted, err := a.svc.PostMessage(c.Request.Context(), currentUser(c).ID, roomParam(c), req.Text)
 	if err != nil {
 		writeError(c, err)
 		return
-	}
-	if a.publish != nil {
-		a.publish(posted)
 	}
 	respond(c, http.StatusCreated, toMessageDTO(posted), pbconv.Message(posted))
 }
 
-// memberRoom looks up the room in the URL and checks the current user has
-// joined it. Reading a room (history or live feed) needs membership, the
-// same as posting to it.
-func (a *API) memberRoom(c *gin.Context) (*chat.Room, error) {
-	room, err := a.store.GetRoom(c.Request.Context(), chat.RoomID(c.Param("id")))
-	if err != nil {
-		return nil, err
-	}
-	if !room.IsMember(currentUser(c).ID) {
-		return nil, chat.ErrNotMember
-	}
-	return room, nil
-}
-
-// GET /rooms/:id/messages?limit=50 (logged in, member)
+// GET /rooms/:id/messages?limit=50 (logged in, member). No limit, or 0,
+// means the default.
 func (a *API) history(c *gin.Context) {
-	room, err := a.memberRoom(c)
+	limit := 0
+	if s := c.Query("limit"); s != "" {
+		n, err := strconv.Atoi(s)
+		if err != nil {
+			writeError(c, invalid("limit", "must be a number from 1 to 500"))
+			return
+		}
+		limit = n
+	}
+	ms, err := a.svc.History(c.Request.Context(), currentUser(c).ID, roomParam(c), limit)
 	if err != nil {
 		writeError(c, err)
 		return
 	}
-	limit, err := strconv.Atoi(c.DefaultQuery("limit", defaultLimit))
-	if err != nil || limit < 1 || limit > maxLimit {
-		writeError(c, invalid("limit", "must be a number from 1 to 500"))
-		return
-	}
-	messages := room.LastN(limit)
-	ms := a.hideBanned(messages)
 	respond(c, http.StatusOK, toMessageDTOs(ms), &pb.HistoryResponse{Messages: pbconv.Messages(ms)})
+}
+
+// roomParam is the :id in the URL, as a room ID.
+func roomParam(c *gin.Context) chat.RoomID {
+	return chat.RoomID(c.Param("id"))
 }

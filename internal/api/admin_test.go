@@ -16,6 +16,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"chatserver/internal/moderation"
+	"chatserver/internal/service"
 	"chatserver/internal/store"
 )
 
@@ -31,7 +32,7 @@ func newAdminServer(t *testing.T, token string) *adminServer {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "banned_words.txt")
 	words := moderation.New("scam", "spam")
-	a := New(store.NewMemoryStore(), 1000).WithModeration(words, path, token)
+	a := New(service.New(store.NewMemoryStore()), 1000).WithModeration(words, path, token)
 	return &adminServer{t: t, router: a.Router(), words: words, path: path}
 }
 

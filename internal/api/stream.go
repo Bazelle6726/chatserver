@@ -24,18 +24,12 @@ import (
 // the client's outbox from the hub, and the request's context, which is
 // cancelled when the watcher disconnects.
 func (a *API) stream(c *gin.Context) {
-	if a.hub == nil {
-		c.AbortWithStatusJSON(http.StatusServiceUnavailable, gin.H{"error": "live delivery is off"})
-		return
-	}
-	room, err := a.memberRoom(c) // only members may watch
+	client, leave, err := a.svc.Watch(c.Request.Context(), currentUser(c).ID, roomParam(c)) // only members may watch
 	if err != nil {
 		writeError(c, err)
 		return
 	}
-
-	client := a.hub.Join(currentUser(c).ID, room.ID)
-	defer a.hub.Leave(client) // always tell the hub, however we exit
+	defer leave() // always tell the hub, however we exit
 
 	w := c.Writer
 	w.Header().Set("Content-Type", "text/event-stream")

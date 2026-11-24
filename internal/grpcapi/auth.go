@@ -9,7 +9,7 @@ import (
 
 	"chatserver/internal/chat"
 	"chatserver/internal/pb"
-	"chatserver/internal/store"
+	"chatserver/internal/service"
 
 	"google.golang.org/grpc/metadata"
 )
@@ -42,13 +42,13 @@ func currentUser(ctx context.Context) *chat.User {
 }
 
 // authenticate finds the calling user from the call's metadata.
-func authenticate(ctx context.Context, s store.Store) (*chat.User, error) {
+func authenticate(ctx context.Context, svc *service.Service) (*chat.User, error) {
 	md, _ := metadata.FromIncomingContext(ctx)
 	userID := md.Get(userIDKey)
 	if len(userID) == 0 || userID[0] == "" {
 		return nil, status.Error(codes.Unauthenticated, "missing x-user-id metadata")
 	}
-	u, err := s.GetUser(ctx, chat.UserID(userID[0]))
+	u, err := svc.GetUser(ctx, chat.UserID(userID[0]))
 	if err != nil {
 		return nil, status.Error(codes.Unauthenticated, "unknown user")
 	}
@@ -58,12 +58,12 @@ func authenticate(ctx context.Context, s store.Store) (*chat.User, error) {
 // UnaryAuth is gRPC's version of the Auth middleware, for unary calls.
 // An interceptor wraps every call, like Gin middleware: calling handler is
 // c.Next(), and returning an error instead is c.Abort().
-func UnaryAuth(s store.Store) grpc.UnaryServerInterceptor {
+func UnaryAuth(svc *service.Service) grpc.UnaryServerInterceptor {
 	return func(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
 		if public[info.FullMethod] {
 			return handler(ctx, req)
 		}
-		u, err := authenticate(ctx, s)
+		u, err := authenticate(ctx, svc)
 		if err != nil {
 			return nil, err
 		}
@@ -86,9 +86,9 @@ func (a *authedStream) Context() context.Context { return a.ctx }
 
 // StreamAuth is the same for streaming calls. Every streaming call needs a
 // logged-in user.
-func StreamAuth(s store.Store) grpc.StreamServerInterceptor {
+func StreamAuth(svc *service.Service) grpc.StreamServerInterceptor {
 	return func(srv any, ss grpc.ServerStream, info *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
-		u, err := authenticate(ss.Context(), s)
+		u, err := authenticate(ss.Context(), svc)
 		if err != nil {
 			return err
 		}

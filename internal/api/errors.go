@@ -6,6 +6,7 @@ import (
 	"net/http"
 
 	"chatserver/internal/chat"
+	"chatserver/internal/service"
 )
 
 // statusClientClosedRequest is for a request whose client went away before
@@ -33,6 +34,8 @@ func statusFor(err error) int {
 		return http.StatusConflict
 	case errors.Is(err, chat.ErrNotMember):
 		return http.StatusForbidden
+	case errors.Is(err, service.ErrLiveOff):
+		return http.StatusServiceUnavailable
 	case errors.Is(err, context.DeadlineExceeded):
 		return http.StatusGatewayTimeout
 	case errors.Is(err, context.Canceled):

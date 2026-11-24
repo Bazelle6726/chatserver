@@ -16,27 +16,24 @@ type createUserReq struct {
 }
 
 // POST /users
-// handler
-func (a *API) createUser(c *gin.Context) { //JSON body is bound to a struct
+func (a *API) createUser(c *gin.Context) {
 	var req createUserReq
 	msg := &pb.CreateUserRequest{}
 	if err := bindBody(c, &req, msg, func() { req.Name = msg.Name }); err != nil {
 		writeError(c, err) // bindBody already says which field, or 413
 		return
 	}
-	user, err := a.store.CreateUser(c.Request.Context(), req.Name) //calls the store to create a user with the name from the request
+	user, err := a.svc.CreateUser(c.Request.Context(), req.Name)
 	if err != nil {
 		writeError(c, err)
 		return
 	}
-	respond(c, http.StatusCreated, toUserDTO(user), pbconv.User(user)) //responds in JSON and HTTP 201
+	respond(c, http.StatusCreated, toUserDTO(user), pbconv.User(user))
 }
 
 // GET /users/:id
-
 func (a *API) getUser(c *gin.Context) {
-	id := c.Param("id") //ID is read and is converted to chat.UserID
-	user, err := a.store.GetUser(c.Request.Context(), chat.UserID(id))
+	user, err := a.svc.GetUser(c.Request.Context(), chat.UserID(c.Param("id")))
 	if err != nil {
 		writeError(c, err)
 		return

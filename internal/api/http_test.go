@@ -11,6 +11,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"chatserver/internal/service"
 	"chatserver/internal/store"
 )
 
@@ -31,7 +32,7 @@ type testServer struct {
 func newServer(t *testing.T) *testServer {
 	t.Helper()
 	// A high limit so the rate limiter never gets in the way of these tests.
-	return &testServer{t: t, router: New(store.NewMemoryStore(), 1000).Router()}
+	return &testServer{t: t, router: New(service.New(store.NewMemoryStore()), 1000).Router()}
 }
 
 // do sends a request. body may be nil; user "" means no X-User-ID header.
@@ -214,8 +215,9 @@ func TestHistory(t *testing.T) {
 	if got := decode[[]messageDTO](t, rec); len(got) != 3 {
 		t.Errorf("default limit returned %d messages, want 3", len(got))
 	}
+	expectStatus(t, s.do("GET", "/rooms/"+r+"/messages?limit=0", nil, u), http.StatusOK, "limit=0 means the default, as over gRPC")
 
-	for _, bad := range []string{"abc", "0", "501"} {
+	for _, bad := range []string{"abc", "-1", "501"} {
 		rec = s.do("GET", "/rooms/"+r+"/messages?limit="+bad, nil, u)
 		expectStatus(t, rec, http.StatusBadRequest, "limit="+bad)
 	}
@@ -226,7 +228,7 @@ func TestHistory(t *testing.T) {
 
 func TestRateLimitMiddleware(t *testing.T) {
 	st := store.NewMemoryStore()
-	router := New(st, 2).Router() // only 2 requests per second
+	router := New(service.New(st), 2).Router() // only 2 requests per second
 	s := &testServer{t: t, router: router}
 	u := s.mustUser("alice")
 

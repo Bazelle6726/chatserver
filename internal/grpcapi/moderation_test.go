@@ -8,6 +8,7 @@ import (
 
 	"chatserver/internal/moderation"
 	"chatserver/internal/pb"
+	"chatserver/internal/service"
 	"chatserver/internal/store"
 )
 
@@ -26,7 +27,7 @@ func TestHistoryHidesBannedWords(t *testing.T) {
 		}
 	}
 
-	srv := New(s, nil, nil).WithModeration(moderation.New("scam").IsBanned)
+	srv := New(service.New(s).WithModeration(moderation.New("scam").IsBanned))
 	ctx := withUser(context.Background(), u) // what the auth interceptor does
 	resp, err := srv.History(ctx, &pb.HistoryRequest{RoomId: string(r.ID)})
 	if err != nil {

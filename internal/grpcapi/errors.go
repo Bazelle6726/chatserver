@@ -6,6 +6,7 @@ import (
 	"log"
 
 	"chatserver/internal/chat"
+	"chatserver/internal/service"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -29,6 +30,8 @@ func toStatus(err error) error {
 		return status.Error(codes.AlreadyExists, err.Error())
 	case errors.Is(err, chat.ErrNotMember):
 		return status.Error(codes.PermissionDenied, err.Error())
+	case errors.Is(err, service.ErrLiveOff):
+		return status.Error(codes.Unavailable, err.Error())
 	case errors.Is(err, context.Canceled):
 		return status.Error(codes.Canceled, err.Error())
 	case errors.Is(err, context.DeadlineExceeded):

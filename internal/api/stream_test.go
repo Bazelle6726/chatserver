@@ -13,13 +13,14 @@ import (
 
 	"chatserver/internal/chat"
 	"chatserver/internal/hub"
+	"chatserver/internal/service"
 	"chatserver/internal/store"
 )
 
 // postMessage must hand every stored message to a.publish.
 func TestPostPublishes(t *testing.T) {
 	got := make(chan chat.Message, 1)
-	a := New(store.NewMemoryStore(), 1000).WithHub(nil, func(m chat.Message) { got <- m })
+	a := New(service.New(store.NewMemoryStore()).WithHub(nil, func(m chat.Message) { got <- m }), 1000)
 	s := &testServer{t: t, router: a.Router()}
 
 	u := s.mustUser("alice")
@@ -57,7 +58,7 @@ func TestLiveStream(t *testing.T) {
 	pool.Start(1)
 	defer pool.Stop()
 
-	a := New(st, 1000).WithHub(h, pool.Submit)
+	a := New(service.New(st).WithHub(h, pool.Submit), 1000)
 	srv := httptest.NewServer(a.Router()) // a real server on a random port
 	defer srv.Close()
 	s := &testServer{t: t, router: a.Router()}

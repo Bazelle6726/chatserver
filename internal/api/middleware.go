@@ -2,7 +2,7 @@ package api
 
 import (
 	"chatserver/internal/chat"
-	"chatserver/internal/store"
+	"chatserver/internal/service"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -11,19 +11,19 @@ import (
 // Auth identifies the caller from the X-User-ID header.
 //
 // It's a function that RETURNS the middleware: a closure that captures s.
-func Auth(s store.Store) gin.HandlerFunc {
+func Auth(svc *service.Service) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		id := c.GetHeader("X-User-ID") //header is read
+		id := c.GetHeader("X-User-ID")
 		if id == "" {
-			id = c.Query("user") //fallback to query param
-		} //if it's empty, or s.GetUser can't find that user, the request is stopped
-		user, err := s.GetUser(c.Request.Context(), chat.UserID(id))
+			id = c.Query("user") // for EventSource, which can't set headers
+		}
+		user, err := svc.GetUser(c.Request.Context(), chat.UserID(id))
 		if err != nil {
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "invalid user ID"})
 			return
 		}
-		c.Set("user", user) //user is stored for later handlers
-		c.Next()            //runs rest of the chain
+		c.Set(userKey, user) // for currentUser in later handlers
+		c.Next()
 	}
 }
 

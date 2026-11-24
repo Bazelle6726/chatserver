@@ -29,6 +29,7 @@ import (
 	"chatserver/internal/hub"
 	"chatserver/internal/moderation"
 	"chatserver/internal/pb"
+	"chatserver/internal/service"
 	"chatserver/internal/store"
 )
 
@@ -85,7 +86,8 @@ func main() {
 		log.Fatal(err)
 	}
 
-	a := api.New(s, 20).WithHub(h, pool.Submit).
+	svc := service.New(s).WithHub(h, pool.Submit).WithModeration(words.IsBanned)
+	a := api.New(svc, 20).
 		WithModeration(words, "banned_words.txt", adminToken).
 		WithWeb(app)
 	srv := &http.Server{
@@ -112,8 +114,8 @@ func main() {
 		log.Fatal(err)
 	}
 	gs := grpc.NewServer(
-		grpc.UnaryInterceptor(grpcapi.UnaryAuth(s)),
-		grpc.StreamInterceptor(grpcapi.StreamAuth(s)),
+		grpc.UnaryInterceptor(grpcapi.UnaryAuth(svc)),
+		grpc.StreamInterceptor(grpcapi.StreamAuth(svc)),
 		// The default is 4 MiB per message; no request here needs more than a
 		// few KB, so match the HTTP body cap.
 		grpc.MaxRecvMsgSize(api.MaxBodyBytes),
@@ -121,7 +123,7 @@ func main() {
 		// and Import each hold one open).
 		grpc.MaxConcurrentStreams(100),
 	)
-	pb.RegisterChatServiceServer(gs, grpcapi.New(s, h, pool.Submit).WithModeration(words.IsBanned))
+	pb.RegisterChatServiceServer(gs, grpcapi.New(svc))
 	reflection.Register(gs) // lets tools like grpcurl list the service without the .proto
 	go func() {
 		log.Println("gRPC listening on localhost:9090")
