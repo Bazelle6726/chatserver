@@ -16,6 +16,7 @@ A multi-room chat server written in Go. Messages are pushed live to everyone wat
 - **Moderation**: worker goroutines replace messages containing [banned words](banned_words.txt) with `[removed]`, and admins can change the list while the server runs
 - **Safe under concurrency**, verified with Go's race detector, with **graceful shutdown**
 - **Built-in profiling** with `pprof`, a **load tester** and **benchmarks**
+- **Structured logs** with `log/slog` (text or JSON), and every setting as a flag or `CHAT_*` environment variable
 
 ## Architecture
 
@@ -65,7 +66,33 @@ go run ./cmd/server
 |---|---|
 | `8080` | the web app, the HTTP API and the SSE live feed |
 | `9090` | the gRPC API |
-| `6060` | `pprof` profiling (localhost only) |
+| `6060` | `pprof` profiling |
+
+All three listen on `localhost` only by default, so other machines can't reach them until you say so (see below).
+
+## Configuration
+
+Every setting is a flag, with a `CHAT_*` environment variable as a fallback; a flag wins over the variable, which wins over the default. `go run ./cmd/server -h` lists them all.
+
+| Flag | Environment | Default | What |
+|---|---|---|---|
+| `-http-addr` | `CHAT_HTTP_ADDR` | `localhost:8080` | web app and HTTP API; `:8080` also accepts other machines |
+| `-grpc-addr` | `CHAT_GRPC_ADDR` | `localhost:9090` | gRPC API |
+| `-pprof-addr` | `CHAT_PPROF_ADDR` | `localhost:6060` | profiling; `""` turns it off. Keep it on localhost |
+| `-banned-words` | `CHAT_BANNED_WORDS` | `banned_words.txt` | the moderation list |
+| `-requests-per-second` | `CHAT_REQUESTS_PER_SECOND` | `20` | per logged-in user; `0` = no limit |
+| `-posts-per-second` | `CHAT_POSTS_PER_SECOND` | `20` | messages per user; `0` = no limit |
+| `-signups-per-minute` | `CHAT_SIGNUPS_PER_MINUTE` | `10` | new accounts per IP; `0` = no limit |
+| `-logins-per-minute` | `CHAT_LOGINS_PER_MINUTE` | `10` | login attempts per IP; `0` = no limit |
+| `-log-format` | `CHAT_LOG_FORMAT` | `text` | `text`, or `json` for a log collector |
+| `-log-level` | `CHAT_LOG_LEVEL` | `info` | `debug`, `info`, `warn` or `error` |
+| – | `CHAT_ADMIN_TOKEN` | – | turns the admin API on; at least 16 characters. Environment only, since flags are visible to every user on the machine |
+
+Logs are structured with `log/slog`: one line per HTTP request or gRPC call, with the route (never the query string), status, time taken, IP and user ID.
+
+```
+time=... level=INFO msg="http request" method=GET route=/rooms/:id/messages status=200 ms=0.4 ip=127.0.0.1 user=u-9a371b61666c2e52
+```
 
 ## Results
 
@@ -101,6 +128,7 @@ chatserver/
     ├── chat/          the domain: users, rooms, messages, validation, errors
     ├── store/         the Store interface and in-memory implementation
     ├── service/       the rules both APIs share: rooms, messages, logins, limits
+    ├── config/        the server's settings: flags and CHAT_* environment variables
     ├── auth/          password hashing and sessions
     ├── ratelimit/     token-bucket rate limits per user or IP
     ├── api/           the HTTP API: routes, middleware, SSE, admin, web app

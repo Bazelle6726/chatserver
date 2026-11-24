@@ -7,7 +7,7 @@ package api
 import (
 	"errors"
 	"io/fs"
-	"log"
+	"log/slog"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -71,7 +71,7 @@ func (a *API) WithWeb(fsys fs.FS) *API {
 func writeError(c *gin.Context, err error) {
 	status := statusFor(err)
 	if status == http.StatusInternalServerError {
-		log.Printf("internal error: %s %s: %v", c.Request.Method, c.FullPath(), err)
+		slog.ErrorContext(c.Request.Context(), "internal error", "method", c.Request.Method, "route", c.FullPath(), "err", err)
 		c.AbortWithStatusJSON(status, gin.H{"error": "internal error"})
 		return
 	}

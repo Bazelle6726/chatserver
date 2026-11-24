@@ -1,5 +1,14 @@
-// Command server runs the chat server: the HTTP API on http://localhost:8080
-// and the gRPC API on localhost:9090. Both share one store, hub and pool.
+// Command server runs the chat server: the web app and HTTP API (by default
+// on http://localhost:8080) and the gRPC API (localhost:9090). Both share one
+// service, store, hub and pool.
+//
+//	go run ./cmd/server                       # the defaults
+//	go run ./cmd/server -h                    # every setting
+//	go run ./cmd/server -http-addr :8080      # also accept other machines
+//
+// Settings come from flags, or CHAT_* environment variables (see package
+// config). Logs are structured (log/slog): text by default, or JSON with
+// -log-format json for a log collector.
 //
 // Press Ctrl+C to stop it. It shuts down gracefully: live streams close,
 // in-flight requests finish, and the worker pool drains its queue. Live
@@ -8,12 +17,12 @@
 package main
 
 import (
-	"chatserver/web"
 	"context"
 	"errors"
 	"flag"
+	"fmt"
 	"io/fs"
-	"log"
+	"log/slog"
 	"net"
 	"net/http"
 	_ "net/http/pprof"
@@ -22,10 +31,12 @@ import (
 	"runtime"
 	"time"
 
+	"github.com/gin-gonic/gin"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/reflection"
 
 	"chatserver/internal/api"
+	"chatserver/internal/config"
 	"chatserver/internal/grpcapi"
 	"chatserver/internal/hub"
 	"chatserver/internal/moderation"
@@ -33,30 +44,59 @@ import (
 	"chatserver/internal/ratelimit"
 	"chatserver/internal/service"
 	"chatserver/internal/store"
+	"chatserver/web"
 )
 
-// minAdminTokenLen is the shortest CHAT_ADMIN_TOKEN the server accepts.
-const minAdminTokenLen = 16
-
 func main() {
-	// Rate limits. 0 turns a limit off, e.g. for the load tester.
-	requestsPerSecond := flag.Float64("requests-per-second", 20, "requests per logged-in user per second (0 = no limit)")
-	postsPerSecond := flag.Float64("posts-per-second", 20, "messages each user may post per second (0 = no limit)")
-	signUpsPerMinute := flag.Int("signups-per-minute", 10, "new accounts per IP per minute (0 = no limit)")
-	loginsPerMinute := flag.Int("logins-per-minute", 10, "login attempts per IP per minute (0 = no limit)")
-	flag.Parse()
+	cfg, warnings, err := config.Load(os.Args[1:], os.Getenv, os.Stderr)
+	if errors.Is(err, flag.ErrHelp) {
+		return // -h: the flags have been printed
+	}
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "config:", err)
+		os.Exit(2)
+	}
 
+	logger := newLogger(cfg)
+	// Make it the default too, so slog.Info and the old log package anywhere
+	// in the program write through it.
+	slog.SetDefault(logger)
+	for _, w := range warnings {
+		logger.Warn(w)
+	}
+
+	if err := run(cfg, logger); err != nil {
+		logger.Error("server stopped", "err", err)
+		os.Exit(1)
+	}
+}
+
+// newLogger builds the logger cfg asks for: human-readable text, or one JSON
+// object per line for log collectors.
+func newLogger(cfg config.Config) *slog.Logger {
+	opts := &slog.HandlerOptions{Level: cfg.LogLevel}
+	if cfg.LogFormat == "json" {
+		return slog.New(slog.NewJSONHandler(os.Stderr, opts))
+	}
+	return slog.New(slog.NewTextHandler(os.Stderr, opts))
+}
+
+// run starts everything, waits for Ctrl+C, and shuts down. It returns an
+// error if something couldn't start.
+func run(cfg config.Config, logger *slog.Logger) error {
 	// ctx is cancelled when you press Ctrl+C. Everything long-running watches it.
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 
-	// pprof: profiling endpoints, on their own port and only on localhost.
-	go func() {
-		log.Println("pprof on http://localhost:6060/debug/pprof/")
-		if err := http.ListenAndServe("localhost:6060", nil); err != nil {
-			log.Println("pprof:", err)
-		}
-	}()
+	// pprof: profiling endpoints, on their own address (localhost by default).
+	if cfg.PprofAddr != "" {
+		go func() {
+			logger.Info("pprof listening", "url", "http://"+cfg.PprofAddr+"/debug/pprof/")
+			if err := http.ListenAndServe(cfg.PprofAddr, nil); err != nil {
+				logger.Error("pprof stopped", "err", err)
+			}
+		}()
+	}
 
 	s := store.NewMemoryStore()
 
@@ -69,48 +109,41 @@ func main() {
 	}()
 
 	// The moderation pool: workers filter banned words, then publish to the hub.
-	// mod.IsBanned is a "method value": a function bound to mod.
-	words, err := moderation.Load("banned_words.txt")
+	// words.IsBanned is a "method value": a function bound to words.
+	words, err := moderation.Load(cfg.BannedWordsPath)
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 	pool := hub.NewPool(words.IsBanned, h.Publish, 256)
 	pool.Start(runtime.NumCPU())
 
-	// HTTP (stages 2-3)
-	adminToken := os.Getenv("CHAT_ADMIN_TOKEN")
-	switch {
-	case adminToken == "":
-		log.Println("admin API off (set CHAT_ADMIN_TOKEN to turn it on)")
-	case len(adminToken) < minAdminTokenLen:
-		// A short token can be guessed, even with the lockout on wrong ones.
-		log.Printf("admin API off: CHAT_ADMIN_TOKEN must be at least %d characters", minAdminTokenLen)
-		adminToken = ""
+	// Rate limits, shared by both front doors so neither is a way round them.
+	// Token buckets: N a second on average, in bursts of up to M.
+	limits := ratelimit.Limits{
+		PerUser: ratelimit.New(cfg.RequestsPerSecond, int(2*cfg.RequestsPerSecond)),
+		PerIP:   ratelimit.New(10, 30),
+		SignUps: ratelimit.New(ratelimit.Per(cfg.SignUpsPerMinute, time.Minute), max(cfg.SignUpsPerMinute, 1)),
+		Logins:  ratelimit.New(ratelimit.Per(cfg.LoginsPerMinute, time.Minute), max(cfg.LoginsPerMinute, 1)),
 	}
+	posts := ratelimit.New(cfg.PostsPerSecond, int(2*cfg.PostsPerSecond)) // messages per user, over HTTP and gRPC alike
+
+	svc := service.New(s).WithHub(h, pool.Submit).WithModeration(words.IsBanned).WithPostLimit(posts)
 
 	// The browser app: the embedded web/dist, with "dist/" stripped so
 	// index.html is at the root.
 	app, err := fs.Sub(web.Dist, "dist")
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 
-	// Rate limits, shared by both front doors so neither is a way round them.
-	// Token buckets: N a second on average, in bursts of up to M.
-	limits := ratelimit.Limits{
-		PerUser: ratelimit.New(*requestsPerSecond, int(2**requestsPerSecond)),                            // requests per logged-in user
-		PerIP:   ratelimit.New(10, 30),                                                                   // requests without a login, per IP
-		SignUps: ratelimit.New(ratelimit.Per(*signUpsPerMinute, time.Minute), max(*signUpsPerMinute, 1)), // new accounts per IP
-		Logins:  ratelimit.New(ratelimit.Per(*loginsPerMinute, time.Minute), max(*loginsPerMinute, 1)),   // login attempts per IP
+	// HTTP. Listen first, so a port that's taken is reported straight away.
+	gin.SetMode(gin.ReleaseMode) // no debug banner; requests are logged by api.RequestLog
+	a := api.New(svc, limits).WithModeration(words, cfg.BannedWordsPath, cfg.AdminToken).WithWeb(app)
+	httpLis, err := net.Listen("tcp", cfg.HTTPAddr)
+	if err != nil {
+		return err
 	}
-	posts := ratelimit.New(*postsPerSecond, int(2**postsPerSecond)) // messages per user, over HTTP and gRPC alike
-
-	svc := service.New(s).WithHub(h, pool.Submit).WithModeration(words.IsBanned).WithPostLimit(posts)
-	a := api.New(svc, limits).
-		WithModeration(words, "banned_words.txt", adminToken).
-		WithWeb(app)
 	srv := &http.Server{
-		Addr:    ":8080",
 		Handler: a.Router(),
 		// Without these, a client can hold a connection open forever by
 		// sending its headers one byte at a time (a "slowloris" attack).
@@ -119,22 +152,25 @@ func main() {
 		MaxHeaderBytes:    16 << 10, // 16 KiB (the default is 1 MiB)
 		// No WriteTimeout or ReadTimeout: both would cut off /stream, which is
 		// meant to stay open. Body size is capped by api.LimitBody instead.
+		ErrorLog: slog.NewLogLogger(logger.Handler(), slog.LevelWarn),
 	}
 	go func() {
-		log.Println("HTTP listening on http://localhost:8080")
-		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			log.Fatal(err)
+		logger.Info("HTTP listening", "url", "http://"+httpLis.Addr().String())
+		if err := srv.Serve(httpLis); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			logger.Error("HTTP server stopped", "err", err)
+			stop() // shut the rest down too
 		}
 	}()
 
-	// gRPC (stage 4): the same store, hub and pool behind a second front door.
-	lis, err := net.Listen("tcp", ":9090")
+	// gRPC: the same service behind a second front door.
+	grpcLis, err := net.Listen("tcp", cfg.GRPCAddr)
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 	gs := grpc.NewServer(
-		grpc.UnaryInterceptor(grpcapi.UnaryAuth(svc, limits)),
-		grpc.StreamInterceptor(grpcapi.StreamAuth(svc, limits)),
+		// Log first, so calls the auth interceptor refuses are logged too.
+		grpc.ChainUnaryInterceptor(grpcapi.UnaryLog(logger), grpcapi.UnaryAuth(svc, limits)),
+		grpc.ChainStreamInterceptor(grpcapi.StreamLog(logger), grpcapi.StreamAuth(svc, limits)),
 		// The default is 4 MiB per message; no request here needs more than a
 		// few KB, so match the HTTP body cap.
 		grpc.MaxRecvMsgSize(api.MaxBodyBytes),
@@ -145,14 +181,15 @@ func main() {
 	pb.RegisterChatServiceServer(gs, grpcapi.New(svc))
 	reflection.Register(gs) // lets tools like grpcurl list the service without the .proto
 	go func() {
-		log.Println("gRPC listening on localhost:9090")
-		if err := gs.Serve(lis); err != nil {
-			log.Fatal(err)
+		logger.Info("gRPC listening", "addr", grpcLis.Addr().String())
+		if err := gs.Serve(grpcLis); err != nil {
+			logger.Error("gRPC server stopped", "err", err)
+			stop()
 		}
 	}()
 
 	<-ctx.Done() // wait for Ctrl+C
-	log.Println("shutting down...")
+	logger.Info("shutting down")
 
 	// The ORDER matters:
 	// 1. The hub stops (it watches ctx) and closes every client's outbox,
@@ -172,7 +209,7 @@ func main() {
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if err := srv.Shutdown(shutdownCtx); err != nil {
-		log.Println("HTTP shutdown:", err)
+		logger.Warn("HTTP shutdown", "err", err)
 	}
 	select {
 	case <-grpcStopped:
@@ -185,6 +222,6 @@ func main() {
 	//    late request panic with "send on closed channel".
 	pool.Stop()
 
-	log.Printf("bye (dropped %d slow clients)", h.Dropped())
-
+	logger.Info("bye", "dropped_slow_clients", h.Dropped())
+	return nil
 }

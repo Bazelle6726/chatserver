@@ -116,7 +116,7 @@ The admin routes use their own token instead (see [below](#moderation-and-the-ad
   - 10 requests a second per IP address on routes without a login (bursts of 30)
   - 10 new accounts a minute per IP address
   - 10 login attempts a minute per IP address, which slows down password guessing
-  - Start the server with `-requests-per-second`, `-posts-per-second`, `-signups-per-minute` or `-logins-per-minute` to change them; 0 turns one off.
+  - Change them with the server's `-requests-per-second`, `-posts-per-second`, `-signups-per-minute` and `-logins-per-minute` flags (or their `CHAT_*` variables, see the [README](../README.md#configuration)); 0 turns one off.
 
 ### Response shapes
 
@@ -224,7 +224,7 @@ The web app's **Moderation (admins)** panel uses these same routes.
 
 ## gRPC API
 
-Defined in [`internal/pb/chat.proto`](../internal/pb/chat.proto) and served on `localhost:9090`. The session token travels as `authorization` metadata, `Bearer <token>`, like the HTTP header. `CreateUser` and `Login` don't need one, and return one.
+Defined in [`internal/pb/chat.proto`](../internal/pb/chat.proto) and served on `localhost:9090` (see `-grpc-addr`). The session token travels as `authorization` metadata, `Bearer <token>`, like the HTTP header. `CreateUser` and `Login` don't need one, and return one.
 
 | Call | Kind | Does |
 |---|---|---|

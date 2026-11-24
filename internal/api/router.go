@@ -1,6 +1,8 @@
 package api
 
 import (
+	"log/slog"
+
 	"github.com/gin-gonic/gin"
 
 	"chatserver/internal/ratelimit"
@@ -9,7 +11,7 @@ import (
 // Router builds the Gin engine with every route and middleware.
 //
 // Recovery is outermost: if any handler panics, the client gets a 500 instead
-// of the whole server crashing. Logger prints one line per request.
+// of the whole server crashing. RequestLog logs one line per request.
 func (a *API) Router() *gin.Engine {
 	r := gin.New()
 	// Trust no proxies: c.ClientIP() is then the real peer address. By default
@@ -19,7 +21,7 @@ func (a *API) Router() *gin.Engine {
 	if err := r.SetTrustedProxies(nil); err != nil {
 		panic(err) // can't happen with nil
 	}
-	r.Use(gin.Recovery(), gin.Logger(), LimitBody(MaxBodyBytes))
+	r.Use(gin.Recovery(), RequestLog(slog.Default()), LimitBody(MaxBodyBytes))
 
 	// Public: signing up and logging in need no session, so they're limited
 	// per IP address, each with a stricter limit of its own on top.

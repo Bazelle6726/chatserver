@@ -3,7 +3,7 @@ package grpcapi
 import (
 	"context"
 	"errors"
-	"log"
+	"log/slog"
 
 	"chatserver/internal/chat"
 	"chatserver/internal/ratelimit"
@@ -43,7 +43,7 @@ func toStatus(err error) error {
 		return status.Error(codes.DeadlineExceeded, err.Error())
 	default:
 		// The server's own fault: log the details, don't send them.
-		log.Printf("internal error: %v", err)
+		slog.Error("internal error", "err", err)
 		return status.Error(codes.Internal, "internal error")
 	}
 }
