@@ -28,8 +28,13 @@ func TestToStatus(t *testing.T) {
 		if code := status.Code(got); code != tt.want {
 			t.Errorf("toStatus(%v) has code %v, want %v", tt.err, code, tt.want)
 		}
-		if got != nil && status.Convert(got).Message() != tt.err.Error() {
-			t.Errorf("toStatus(%v) message = %q, want the original error text", tt.err, status.Convert(got).Message())
+		// Client errors keep their text; internal ones must not leak it.
+		want := tt.err.Error()
+		if tt.want == codes.Internal {
+			want = "internal error"
+		}
+		if got != nil && status.Convert(got).Message() != want {
+			t.Errorf("toStatus(%v) message = %q, want %q", tt.err, status.Convert(got).Message(), want)
 		}
 	}
 	if toStatus(nil) != nil {

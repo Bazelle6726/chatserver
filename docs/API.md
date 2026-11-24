@@ -73,8 +73,8 @@ All routes except the two user routes need an existing user's ID, in the `X-User
 | `GET` | `/rooms` | user | – | `200` list of rooms, sorted by name |
 | `POST` | `/rooms/:id/members` | user | – | `204` (you join the room) |
 | `POST` | `/rooms/:id/messages` | user | `{"text": "hello"}` | `201` message |
-| `GET` | `/rooms/:id/messages?limit=50` | user | – | `200` list of messages, oldest first |
-| `GET` | `/rooms/:id/stream` | user | – | `200` event stream |
+| `GET` | `/rooms/:id/messages?limit=50` | member | – | `200` list of messages, oldest first |
+| `GET` | `/rooms/:id/stream` | member | – | `200` event stream |
 | `GET` | `/admin/banned-words` | admin | – | `200` `{"words": [...]}` |
 | `POST` | `/admin/banned-words` | admin | `{"word": "spam"}` | `201` `{"word": "spam"}` |
 | `DELETE` | `/admin/banned-words/:word` | admin | – | `204` |
@@ -83,7 +83,11 @@ All routes except the two user routes need an existing user's ID, in the `X-User
 **Rules:**
 
 - **Names** (users and rooms): 3–20 characters, using letters, digits, `-` and `_`, and unique.
-- **Messages**: not blank, at most 500 characters. You must be a member of the room to post.
+  - A name can't mix Latin, Cyrillic and Greek letters, so `pаypal` with a Cyrillic `а` is refused.
+  - Uniqueness ignores case and look-alike letters: once `alice` exists, `Alice`, `ＡＬＩＣＥ` (fullwidth) and an all-Cyrillic look-alike are taken too.
+- **Membership**: you must join a room (`POST /rooms/:id/members`) before you can post to it, read its history or watch its stream.
+- **Messages**: not blank, at most 500 characters.
+- **Body size**: at most 64 KiB, then `413`.
 - **`max_history`**: 1 to 1000; omitted or 0 means 100.
 - **`limit`**: 1 to 500, default 50.
 - **Rate limit**: 20 requests per second per user on user routes, then `429`.
@@ -114,11 +118,12 @@ Errors are always JSON. Validation errors also name the field:
 |---|---|
 | `400` | invalid body, name, text, limit or word |
 | `401` | missing or unknown user ID, or a missing or wrong admin token |
-| `403` | posting to a room you haven't joined |
+| `403` | posting to, reading or watching a room you haven't joined |
 | `404` | unknown user, room or path, or the admin API is off |
-| `409` | name already taken, or already a member |
-| `429` | rate limit exceeded |
-| `500` | anything unexpected |
+| `409` | name already taken (or one that looks the same), or already a member |
+| `413` | request body over 64 KiB |
+| `429` | rate limit exceeded, or too many wrong admin tokens |
+| `500` | anything unexpected; the body is just `{"error": "internal error"}` and the details go to the server log |
 
 ## Live feed (SSE)
 
@@ -147,14 +152,22 @@ Messages are checked against [`banned_words.txt`](../banned_words.txt), loaded a
 
 - **Format:** one word per line. Blank lines and lines starting with `#` are ignored.
 - **Matching:** whole words, ignoring case. With `scam` banned, "SCAM!" is caught but "scampi" isn't, so list every form you want caught.
-- **Effect:** a matching message is shown as `[removed]`, both in the live feed and in the HTTP history. The store keeps the original text; the gRPC `History` call still returns it.
+- **Disguises are caught too.** Before matching, text is folded ([`internal/textnorm`](../internal/textnorm/textnorm.go) and [`internal/moderation`](../internal/moderation/moderation.go)):
+  - look-alike letters from other scripts become Latin: `ѕсаm` (Cyrillic) → `scam`
+  - fullwidth and other compatibility forms become plain: `ＳＣＡＭ` → `scam`
+  - invisible characters are dropped: `sc` + zero-width space + `am` → `scam`
+  - leetspeak is undone: `sc4m`, `$cam`, `sc@m` → `scam`
+  - spaced-out letters are glued back together: `s c a m` and `s.c.a.m` → `scam`
+- **Effect:** a matching message is shown as `[removed]` in the live feed and in the history, over both HTTP and gRPC. The store keeps the original text.
 - **When:** history is checked as it's read, so banning a word also hides older messages that used it, and unbanning brings them back.
 
-A word list won't catch deliberate misspellings like `sh1t`. For wider coverage, start from an open-source list such as LDNOOBW.
+A word list still won't catch everything: a word split differently (`sc am`) or a look-alike missing from the table gets through. The full list of look-alikes is Unicode's [confusables.txt](https://www.unicode.org/reports/tr39/). For a wider word list, start from an open-source one such as LDNOOBW.
 
 ### Admin API
 
-The admin API is **off unless `CHAT_ADMIN_TOKEN` is set** when the server starts; while it's off, its routes answer `404`. Each request sends the token in the `X-Admin-Token` header.
+The admin API is **off unless `CHAT_ADMIN_TOKEN` is set** to at least 16 characters when the server starts; while it's off, its routes answer `404`. Each request sends the token in the `X-Admin-Token` header.
+
+After **5 wrong tokens in a minute** from one IP address, that address gets `429` until the minute is up, even with the right token. The server uses the connection's real address and ignores `X-Forwarded-For`, so a client can't dodge the lockout by claiming a new IP. Behind a reverse proxy, add the proxy's address to `SetTrustedProxies` in [`router.go`](../internal/api/router.go).
 
 ```bash
 TOKEN=pick-a-long-secret
@@ -175,9 +188,10 @@ Invoke-RestMethod localhost:8080/admin/banned-words -Method Post -Headers $h `
 Invoke-RestMethod localhost:8080/admin/banned-words/fraud -Method Delete -Headers $h
 ```
 
-- **Words** are lowercased and trimmed, then must be 1–50 letters or digits. Anything else could never match, so it gets `400`.
-- **Changes take effect at once**, for new messages and in the history: banning a word also hides older messages that used it, and unbanning shows them again. Changes are saved to `banned_words.txt`. Saving rewrites the file as a plain sorted list, so its comments are lost after the first change.
-- **Removing** a word that isn't on the list still answers `204`.
+- **Words** are trimmed, then must be 1–50 letters or digits. Anything else could never match, so it gets `400`.
+- **Words are stored folded**, the same way messages are: adding `Sc4m` stores and lists `scam`, and the response's `word` says what was stored.
+- **Changes take effect at once**, for new messages and in the history: banning a word also hides older messages that used it, and unbanning shows them again. Changes are saved to `banned_words.txt`. Saving rewrites the file as a plain sorted list, so its comments are lost after the first change. Each save writes a temporary file and then swaps it in, so two admins saving at once, or a crash mid-save, can't leave a broken file.
+- **Removing** a word that isn't on the list still answers `204`. Any spelling of a word removes it: `DELETE /admin/banned-words/SC4M` removes `scam`.
 
 The web app's **Moderation (admins)** panel uses these same routes.
 
@@ -194,7 +208,7 @@ Defined in [`internal/pb/chat.proto`](../internal/pb/chat.proto) and served on `
 | `Import` | client streaming | send many messages, get one summary |
 | `Converse` | bidirectional | post and receive on one call; the first message names the room |
 
-Errors come back as gRPC status codes that match the HTTP ones: `InvalidArgument`, `Unauthenticated`, `PermissionDenied`, `NotFound`, `AlreadyExists`, `Internal`.
+Errors come back as gRPC status codes that match the HTTP ones: `InvalidArgument`, `Unauthenticated`, `PermissionDenied`, `NotFound`, `AlreadyExists`, `Internal`. As over HTTP, `History` and `Watch` need you to have joined the room (else `PermissionDenied`), and an `Internal` error's message is just "internal error". `Converse` joins you to the room named in its first message, if you aren't a member yet.
 
 ### The terminal client
 

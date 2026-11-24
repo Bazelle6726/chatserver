@@ -88,7 +88,7 @@ func (s *Server) PostMessage(ctx context.Context, req *pb.PostMessageRequest) (*
 }
 
 func (s *Server) History(ctx context.Context, req *pb.HistoryRequest) (*pb.HistoryResponse, error) {
-	room, err := s.store.GetRoom(chat.RoomID(req.GetRoomId())) //get the room
+	room, err := s.memberRoom(currentUser(ctx).ID, req.GetRoomId()) // only members may read
 	if err != nil {
 		return nil, toStatus(err)
 	}
@@ -99,5 +99,6 @@ func (s *Server) History(ctx context.Context, req *pb.HistoryRequest) (*pb.Histo
 	if limit < 1 || limit > maxLimit {
 		return nil, toStatus(invalid("limit", "must be 1-500"))
 	}
-	return &pb.HistoryResponse{Messages: pbconv.Messages(room.LastN(limit))}, nil
+	ms := s.hideBanned(room.LastN(limit))
+	return &pb.HistoryResponse{Messages: pbconv.Messages(ms)}, nil
 }

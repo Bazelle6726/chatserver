@@ -1,8 +1,10 @@
 // Command server runs the chat server: the HTTP API on http://localhost:8080
 // and the gRPC API on localhost:9090. Both share one store, hub and pool.
 //
-// Press Ctrl+C to stop it. It shuts down gracefully: in-flight requests
-// finish, live streams close, and every queued message is delivered first.
+// Press Ctrl+C to stop it. It shuts down gracefully: live streams close,
+// in-flight requests finish, and the worker pool drains its queue. Live
+// streams close first, so messages still queued at that point are saved in
+// the room history but have no watchers left to be pushed to.
 package main
 
 import (
@@ -29,6 +31,9 @@ import (
 	"chatserver/internal/pb"
 	"chatserver/internal/store"
 )
+
+// minAdminTokenLen is the shortest CHAT_ADMIN_TOKEN the server accepts.
+const minAdminTokenLen = 16
 
 func main() {
 	// ctx is cancelled when you press Ctrl+C. Everything long-running watches it.
@@ -64,8 +69,13 @@ func main() {
 
 	// HTTP (stages 2-3)
 	adminToken := os.Getenv("CHAT_ADMIN_TOKEN")
-	if adminToken == "" {
+	switch {
+	case adminToken == "":
 		log.Println("admin API off (set CHAT_ADMIN_TOKEN to turn it on)")
+	case len(adminToken) < minAdminTokenLen:
+		// A short token can be guessed, even with the lockout on wrong ones.
+		log.Printf("admin API off: CHAT_ADMIN_TOKEN must be at least %d characters", minAdminTokenLen)
+		adminToken = ""
 	}
 
 	// The browser app: the embedded web/dist, with "dist/" stripped so
@@ -78,7 +88,17 @@ func main() {
 	a := api.New(s, 20).WithHub(h, pool.Submit).
 		WithModeration(words, "banned_words.txt", adminToken).
 		WithWeb(app)
-	srv := &http.Server{Addr: ":8080", Handler: a.Router()}
+	srv := &http.Server{
+		Addr:    ":8080",
+		Handler: a.Router(),
+		// Without these, a client can hold a connection open forever by
+		// sending its headers one byte at a time (a "slowloris" attack).
+		ReadHeaderTimeout: 5 * time.Second,
+		IdleTimeout:       60 * time.Second,
+		MaxHeaderBytes:    16 << 10, // 16 KiB (the default is 1 MiB)
+		// No WriteTimeout or ReadTimeout: both would cut off /stream, which is
+		// meant to stay open. Body size is capped by api.LimitBody instead.
+	}
 	go func() {
 		log.Println("HTTP listening on http://localhost:8080")
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
@@ -94,8 +114,14 @@ func main() {
 	gs := grpc.NewServer(
 		grpc.UnaryInterceptor(grpcapi.UnaryAuth(s)),
 		grpc.StreamInterceptor(grpcapi.StreamAuth(s)),
+		// The default is 4 MiB per message; no request here needs more than a
+		// few KB, so match the HTTP body cap.
+		grpc.MaxRecvMsgSize(api.MaxBodyBytes),
+		// At most this many calls at once on one connection (Watch, Converse
+		// and Import each hold one open).
+		grpc.MaxConcurrentStreams(100),
 	)
-	pb.RegisterChatServiceServer(gs, grpcapi.New(s, h, pool.Submit))
+	pb.RegisterChatServiceServer(gs, grpcapi.New(s, h, pool.Submit).WithModeration(words.IsBanned))
 	reflection.Register(gs) // lets tools like grpcurl list the service without the .proto
 	go func() {
 		log.Println("gRPC listening on localhost:9090")

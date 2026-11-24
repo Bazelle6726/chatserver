@@ -21,7 +21,7 @@ func (a *API) createUser(c *gin.Context) { //JSON body is bound to a struct
 	var req createUserReq
 	msg := &pb.CreateUserRequest{}
 	if err := bindBody(c, &req, msg, func() { req.Name = msg.Name }); err != nil {
-		writeError(c, invalid("body", err.Error()))
+		writeError(c, err) // bindBody already says which field, or 413
 		return
 	}
 	user, err := a.store.CreateUser(req.Name) //calls the store to create a user with the name from the request

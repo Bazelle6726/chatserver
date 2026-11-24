@@ -98,9 +98,23 @@ func (a *API) postMessage(c *gin.Context) {
 	respond(c, http.StatusCreated, toMessageDTO(posted), pbconv.Message(posted))
 }
 
-// GET /rooms/:id/messages?limit=50 (logged in)
-func (a *API) history(c *gin.Context) {
+// memberRoom looks up the room in the URL and checks the current user has
+// joined it. Reading a room (history or live feed) needs membership, the
+// same as posting to it.
+func (a *API) memberRoom(c *gin.Context) (*chat.Room, error) {
 	room, err := a.store.GetRoom(chat.RoomID(c.Param("id")))
+	if err != nil {
+		return nil, err
+	}
+	if !room.IsMember(currentUser(c).ID) {
+		return nil, chat.ErrNotMember
+	}
+	return room, nil
+}
+
+// GET /rooms/:id/messages?limit=50 (logged in, member)
+func (a *API) history(c *gin.Context) {
+	room, err := a.memberRoom(c)
 	if err != nil {
 		writeError(c, err)
 		return

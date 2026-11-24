@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	"strings"
+	"time"
 	"unicode"
 
 	"crypto/subtle"
@@ -18,14 +19,29 @@ const adminTokenHeader = "X-Admin-Token"
 // maxWordLen is the longest banned word the admin API accepts.
 const maxWordLen = 50
 
+// Wrong admin tokens allowed per IP address before it's locked out for the
+// rest of the window. Without a limit, a script could try millions of tokens.
+const (
+	adminMaxFailures   = 5
+	adminFailureWindow = time.Minute
+)
+
 // AdminOnly lets a request through only if it carries the right admin token.
-func AdminOnly(token string) gin.HandlerFunc {
+// failures counts wrong tokens per client IP; an IP that has used up its
+// allowance gets 429 without its token even being checked.
+func AdminOnly(token string, failures *Limiter) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if token == "" {
 			c.AbortWithStatusJSON(http.StatusNotFound, gin.H{"error": "admin API is off"})
 			return
 		}
+		ip := c.ClientIP() // the real peer address: see SetTrustedProxies in Router
+		if failures.Blocked(ip) {
+			c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{"error": "too many wrong admin tokens, try again later"})
+			return
+		}
 		if subtle.ConstantTimeCompare([]byte(c.GetHeader(adminTokenHeader)), []byte(token)) != 1 {
+			failures.Allow(ip) // record the failure
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "missing or wrong X-Admin-Token"})
 			return
 		}
@@ -62,7 +78,7 @@ func validWord(w string) error {
 func (a *API) addBannedWord(c *gin.Context) {
 	var req bannedWordReq
 	if err := c.ShouldBindJSON(&req); err != nil {
-		writeError(c, invalid("body", err.Error()))
+		writeError(c, bodyError(err))
 		return
 	}
 	word := strings.ToLower(strings.TrimSpace(req.Word))
@@ -70,12 +86,12 @@ func (a *API) addBannedWord(c *gin.Context) {
 		writeError(c, err)
 		return
 	}
-	a.words.Add(word)
+	stored := a.words.Add(word) // folded: "Sc4m" is stored as "scam"
 	if err := a.saveWords(); err != nil {
 		writeError(c, err)
 		return
 	}
-	c.JSON(http.StatusCreated, gin.H{"word": word})
+	c.JSON(http.StatusCreated, gin.H{"word": stored})
 }
 
 // DELETE /admin/banned-words/:word

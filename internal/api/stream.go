@@ -6,11 +6,9 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
-
-	"chatserver/internal/chat"
 )
 
-// GET /rooms/:id/stream  (logged in) - live messages as Server-Sent Events.
+// GET /rooms/:id/stream  (logged in, member) - live messages as Server-Sent Events.
 //
 // SSE is plain HTTP: the response simply never ends. Each new message is
 // written as
@@ -30,7 +28,7 @@ func (a *API) stream(c *gin.Context) {
 		c.AbortWithStatusJSON(http.StatusServiceUnavailable, gin.H{"error": "live delivery is off"})
 		return
 	}
-	room, err := a.store.GetRoom(chat.RoomID(c.Param("id")))
+	room, err := a.memberRoom(c) // only members may watch
 	if err != nil {
 		writeError(c, err)
 		return

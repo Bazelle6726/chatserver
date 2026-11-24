@@ -1,6 +1,7 @@
 package moderation
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -22,6 +23,24 @@ func TestIsBanned(t *testing.T) {
 		{"spammy", false},
 		{"hello world", false},
 		{"", false},
+
+		// Disguises that used to slip through.
+		{"cheap sc4m here", true},    // leetspeak digit
+		{"$cam", true},               // leetspeak symbol
+		{"sc@m", true},               // leetspeak symbol
+		{"email bob@scam.com", true}, // a symbol that really is a separator
+		{"s c a m", true},            // spaced out
+		{"s.c.a.m!", true},           // dotted
+		{"total a s c a m", true},    // spaced, after another single letter
+		{"sc​am", true},              // zero-width space inside
+		{"ѕсаm", true},               // Cyrillic look-alikes
+		{"ＳＣＡＭ", true},               // fullwidth
+		{"s̲c̲a̲m̲", true},           // combining underline
+
+		// ...without new false alarms.
+		{"I have 5 apples", false},
+		{"a b c", false},
+		{"$100 for scampi", false},
 	}
 	for _, tt := range tests {
 		if got := l.IsBanned(tt.text); got != tt.want {
@@ -74,6 +93,52 @@ func TestLoadAndSave(t *testing.T) {
 
 	if _, err := Load(filepath.Join(dir, "missing.txt")); err == nil {
 		t.Error("Load of a missing file should fail")
+	}
+}
+
+// Adding a disguised word bans the plain one, and is listed folded.
+func TestAddFolds(t *testing.T) {
+	l := New()
+	if got := l.Add("Fr4ud"); got != "fraud" {
+		t.Errorf("Add(%q) stored %q, want %q", "Fr4ud", got, "fraud")
+	}
+	if !l.IsBanned("total fraud") {
+		t.Error("the plain word isn't banned")
+	}
+	l.Remove("FRAUD")
+	if l.IsBanned("total fraud") {
+		t.Error("Remove of a different spelling didn't unban it")
+	}
+}
+
+// Many Saves at once must never leave a broken file or stray temp files.
+func TestConcurrentSave(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "words.txt")
+	l := New("scam")
+	var wg sync.WaitGroup
+	for i := range 20 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			l.Add(fmt.Sprintf("word%c", 'a'+i))
+			if err := l.Save(path); err != nil {
+				t.Error(err)
+			}
+		}()
+	}
+	wg.Wait()
+
+	again, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(again.Words(), l.Words()) {
+		t.Errorf("after concurrent saves the file has %v, want %v", again.Words(), l.Words())
+	}
+	entries, _ := os.ReadDir(dir)
+	if len(entries) != 1 {
+		t.Errorf("dir has %d files, want only words.txt (temp files left behind?)", len(entries))
 	}
 }
 

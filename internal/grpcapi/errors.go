@@ -3,6 +3,7 @@ package grpcapi
 import (
 	"chatserver/internal/chat"
 	"errors"
+	"log"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -27,7 +28,9 @@ func toStatus(err error) error {
 	case errors.Is(err, chat.ErrNotMember):
 		return status.Error(codes.PermissionDenied, err.Error())
 	default:
-		return status.Error(codes.Internal, err.Error())
+		// The server's own fault: log the details, don't send them.
+		log.Printf("internal error: %v", err)
+		return status.Error(codes.Internal, "internal error")
 	}
 }
 
