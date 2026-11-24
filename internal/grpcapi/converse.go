@@ -41,7 +41,7 @@ func (s *Server) Converse(stream grpc.BidiStreamingServer[pb.ConverseRequest, pb
 	if roomID == "" {
 		return status.Error(codes.InvalidArgument, "the first message must set join_room_id")
 	}
-	room, err := s.store.GetRoom(chat.RoomID(roomID))
+	room, err := s.store.GetRoom(ctx, chat.RoomID(roomID))
 	if err != nil {
 		return toStatus(err)
 	}
@@ -64,7 +64,7 @@ func (s *Server) Converse(stream grpc.BidiStreamingServer[pb.ConverseRequest, pb
 				recvErr <- err // includes io.EOF: the client closed its side
 				return
 			}
-			if _, err := s.post(user.ID, roomID, req.GetText()); err != nil {
+			if _, err := s.post(ctx, user.ID, roomID, req.GetText()); err != nil {
 				recvErr <- toStatus(err)
 				return
 			}

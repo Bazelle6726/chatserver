@@ -23,7 +23,7 @@ func (s *Server) Import(stream grpc.ClientStreamingServer[pb.PostMessageRequest,
 			}
 			return err
 		}
-		_, err = s.post(user.ID, req.GetRoomId(), req.GetText())
+		_, err = s.post(stream.Context(), user.ID, req.GetRoomId(), req.GetText())
 		if err != nil {
 			return toStatus(err)
 		}

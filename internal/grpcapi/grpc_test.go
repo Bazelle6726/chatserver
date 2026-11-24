@@ -77,7 +77,7 @@ func (e *env) as(user string) context.Context {
 // Setup goes straight through the store, so each test only exercises its own call.
 func (e *env) user(name string) string {
 	e.t.Helper()
-	u, err := e.store.CreateUser(name)
+	u, err := e.store.CreateUser(e.t.Context(), name)
 	if err != nil {
 		e.t.Fatal(err)
 	}
@@ -86,7 +86,7 @@ func (e *env) user(name string) string {
 
 func (e *env) room(name string, members ...string) string {
 	e.t.Helper()
-	r, err := e.store.CreateRoom(name, 100)
+	r, err := e.store.CreateRoom(e.t.Context(), name, 100)
 	if err != nil {
 		e.t.Fatal(err)
 	}
@@ -252,7 +252,7 @@ func TestWatch(t *testing.T) {
 	}
 
 	for _, text := range []string{"first", "second"} {
-		m, err := e.store.PostMessage(chat.RoomID(room), chat.UserID(alice), text)
+		m, err := e.store.PostMessage(e.t.Context(), chat.RoomID(room), chat.UserID(alice), text)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -288,7 +288,7 @@ func TestImport(t *testing.T) {
 	if sum.GetPosted() != 3 {
 		t.Errorf("posted = %d, want 3", sum.GetPosted())
 	}
-	r, _ := e.store.GetRoom(chat.RoomID(room))
+	r, _ := e.store.GetRoom(e.t.Context(), chat.RoomID(room))
 	if n := len(r.LastN(10)); n != 3 {
 		t.Errorf("room has %d messages after Import, want 3", n)
 	}

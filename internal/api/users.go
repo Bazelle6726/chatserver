@@ -24,7 +24,7 @@ func (a *API) createUser(c *gin.Context) { //JSON body is bound to a struct
 		writeError(c, err) // bindBody already says which field, or 413
 		return
 	}
-	user, err := a.store.CreateUser(req.Name) //calls the store to create a user with the name from the request
+	user, err := a.store.CreateUser(c.Request.Context(), req.Name) //calls the store to create a user with the name from the request
 	if err != nil {
 		writeError(c, err)
 		return
@@ -36,7 +36,7 @@ func (a *API) createUser(c *gin.Context) { //JSON body is bound to a struct
 
 func (a *API) getUser(c *gin.Context) {
 	id := c.Param("id") //ID is read and is converted to chat.UserID
-	user, err := a.store.GetUser(chat.UserID(id))
+	user, err := a.store.GetUser(c.Request.Context(), chat.UserID(id))
 	if err != nil {
 		writeError(c, err)
 		return

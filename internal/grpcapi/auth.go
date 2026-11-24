@@ -48,7 +48,7 @@ func authenticate(ctx context.Context, s store.Store) (*chat.User, error) {
 	if len(userID) == 0 || userID[0] == "" {
 		return nil, status.Error(codes.Unauthenticated, "missing x-user-id metadata")
 	}
-	u, err := s.GetUser(chat.UserID(userID[0]))
+	u, err := s.GetUser(ctx, chat.UserID(userID[0]))
 	if err != nil {
 		return nil, status.Error(codes.Unauthenticated, "unknown user")
 	}

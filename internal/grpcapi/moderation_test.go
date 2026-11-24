@@ -15,13 +15,13 @@ import (
 // do, or gRPC clients could read what everyone else sees as "[removed]".
 func TestHistoryHidesBannedWords(t *testing.T) {
 	s := store.NewMemoryStore()
-	u, _ := s.CreateUser("alice")
-	r, _ := s.CreateRoom("general", 10)
+	u, _ := s.CreateUser(t.Context(), "alice")
+	r, _ := s.CreateRoom(t.Context(), "general", 10)
 	if err := r.Join(u.ID); err != nil {
 		t.Fatal(err)
 	}
 	for _, text := range []string{"hello", "cheap scam here", "scampi"} {
-		if _, err := s.PostMessage(r.ID, u.ID, text); err != nil {
+		if _, err := s.PostMessage(t.Context(), r.ID, u.ID, text); err != nil {
 			t.Fatal(err)
 		}
 	}

@@ -16,7 +16,7 @@ import (
 // CreateUser and GetUser are written for you as examples.
 
 func (s *Server) CreateUser(ctx context.Context, req *pb.CreateUserRequest) (*pb.User, error) {
-	u, err := s.store.CreateUser(req.GetName())
+	u, err := s.store.CreateUser(ctx, req.GetName())
 	if err != nil {
 		return nil, toStatus(err)
 	}
@@ -24,7 +24,7 @@ func (s *Server) CreateUser(ctx context.Context, req *pb.CreateUserRequest) (*pb
 }
 
 func (s *Server) GetUser(ctx context.Context, req *pb.GetUserRequest) (*pb.User, error) {
-	u, err := s.store.GetUser(chat.UserID(req.GetId()))
+	u, err := s.store.GetUser(ctx, chat.UserID(req.GetId()))
 	if err != nil {
 		return nil, toStatus(err)
 	}
@@ -40,19 +40,22 @@ func (s *Server) CreateRoom(ctx context.Context, req *pb.CreateRoomRequest) (*pb
 	if max < 1 || max > maxMaxHistory {
 		return nil, toStatus(invalid("max_history", "must be 1-1000"))
 	}
-	r, err := s.store.CreateRoom(req.GetName(), max)
+	r, err := s.store.CreateRoom(ctx, req.GetName(), max)
 	if err != nil {
 		return nil, toStatus(err)
 	}
 	return pbconv.Room(r), nil
 }
 
-// Converts every room from s.store.ListRooms() into a []*pb.Room
+// Converts every room from s.store.ListRooms(ctx) into a []*pb.Room
 // and returns &pb.ListRoomsResponse{Rooms: ...}
 func (s *Server) ListRooms(ctx context.Context, req *pb.ListRoomsRequest) (*pb.ListRoomsResponse, error) {
-	List := s.store.ListRooms()
-	pbRooms := make([]*pb.Room, len(List))
-	for i, r := range List {
+	rooms, err := s.store.ListRooms(ctx)
+	if err != nil {
+		return nil, toStatus(err)
+	}
+	pbRooms := make([]*pb.Room, len(rooms))
+	for i, r := range rooms {
 		pbRooms[i] = pbconv.Room(r)
 	}
 	return &pb.ListRoomsResponse{Rooms: pbRooms}, nil
@@ -61,7 +64,7 @@ func (s *Server) ListRooms(ctx context.Context, req *pb.ListRoomsRequest) (*pb.L
 // get the room, then room.Join(currentUser(ctx).ID).
 func (s *Server) JoinRoom(ctx context.Context, req *pb.JoinRoomRequest) (*pb.JoinRoomResponse, error) {
 	user := currentUser(ctx)
-	room, err := s.store.GetRoom(chat.RoomID(req.GetRoomId())) //get the room
+	room, err := s.store.GetRoom(ctx, chat.RoomID(req.GetRoomId())) //get the room
 	if err != nil {
 		return nil, toStatus(err)
 	}
@@ -76,7 +79,7 @@ func (s *Server) JoinRoom(ctx context.Context, req *pb.JoinRoomRequest) (*pb.Joi
 // it. Return toPBMessage of the stored message.
 func (s *Server) PostMessage(ctx context.Context, req *pb.PostMessageRequest) (*pb.Message, error) {
 	user := currentUser(ctx)
-	msg, err := s.post(user.ID, req.GetRoomId(), req.GetText())
+	msg, err := s.post(ctx, user.ID, req.GetRoomId(), req.GetText())
 	if err != nil {
 		return nil, toStatus(err)
 	}
@@ -84,7 +87,7 @@ func (s *Server) PostMessage(ctx context.Context, req *pb.PostMessageRequest) (*
 }
 
 func (s *Server) History(ctx context.Context, req *pb.HistoryRequest) (*pb.HistoryResponse, error) {
-	room, err := s.memberRoom(currentUser(ctx).ID, req.GetRoomId()) // only members may read
+	room, err := s.memberRoom(ctx, currentUser(ctx).ID, req.GetRoomId()) // only members may read
 	if err != nil {
 		return nil, toStatus(err)
 	}

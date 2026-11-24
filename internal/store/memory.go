@@ -1,6 +1,8 @@
 package store
 
 import (
+	"context"
+
 	"chatserver/internal/chat"
 	"chatserver/internal/textnorm"
 	"fmt"
@@ -61,12 +63,16 @@ func NewMemoryStore(opts ...Option) *MemoryStore {
 
 // CreateUser validates the name and stores a new RoleMember user.
 //
-//   - validated with chat.ValidateName and returns the error as-is
-//   - returns chat.ErrAlreadyExists if another user already has this name, or
-//     one that looks the same (see the userNames index)
-//     (wrap it with context: fmt.Errorf("user %q: %w", name, chat.ErrAlreadyExists))
-//   - otherwise the user is created with an ID from nextUserID, stores it, returns it
-func (s *MemoryStore) CreateUser(name string) (*chat.User, error) {
+//   - returns ctx.Err() if the context is already cancelled (every method
+//     does this first)
+//   - validates the name with chat.ValidateName and returns its error as-is
+//   - returns an error wrapping chat.ErrAlreadyExists if another user already
+//     has this name, or one that looks the same (see the userNames index)
+//   - otherwise creates the user with an ID from nextUserID, stores it, returns it
+func (s *MemoryStore) CreateUser(ctx context.Context, name string) (*chat.User, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	s.mu.Lock() // held for the duplicate check AND the insert
 	defer s.mu.Unlock()
 	if err := chat.ValidateName(name); err != nil {
@@ -87,7 +93,10 @@ func (s *MemoryStore) CreateUser(name string) (*chat.User, error) {
 }
 
 // Returns the user, or an error wrapping chat.ErrUserNotFound.
-func (s *MemoryStore) GetUser(id chat.UserID) (*chat.User, error) {
+func (s *MemoryStore) GetUser(ctx context.Context, id chat.UserID) (*chat.User, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	if user, exists := s.users[id]; exists {
@@ -97,7 +106,10 @@ func (s *MemoryStore) GetUser(id chat.UserID) (*chat.User, error) {
 }
 
 // Same rules as CreateUser, but for rooms. Use chat.NewRoom.
-func (s *MemoryStore) CreateRoom(name string, maxHistory int) (*chat.Room, error) {
+func (s *MemoryStore) CreateRoom(ctx context.Context, name string, maxHistory int) (*chat.Room, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if err := chat.ValidateName(name); err != nil {
@@ -114,7 +126,10 @@ func (s *MemoryStore) CreateRoom(name string, maxHistory int) (*chat.Room, error
 }
 
 // Returns the room, or an error wrapping chat.ErrRoomNotFound.
-func (s *MemoryStore) GetRoom(id chat.RoomID) (*chat.Room, error) {
+func (s *MemoryStore) GetRoom(ctx context.Context, id chat.RoomID) (*chat.Room, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	if room, exists := s.rooms[id]; exists {
@@ -127,7 +142,10 @@ func (s *MemoryStore) GetRoom(id chat.RoomID) (*chat.Room, error) {
 //
 // Map iteration order is random, so it collects the
 // rooms into a slice and sorts it.
-func (s *MemoryStore) ListRooms() []*chat.Room {
+func (s *MemoryStore) ListRooms(ctx context.Context) ([]*chat.Room, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	rooms := make([]*chat.Room, 0, len(s.rooms))
@@ -137,7 +155,7 @@ func (s *MemoryStore) ListRooms() []*chat.Room {
 	slices.SortFunc(rooms, func(a, b *chat.Room) int {
 		return strings.Compare(a.Name, b.Name)
 	})
-	return rooms
+	return rooms, nil
 }
 
 // PostMessage validates and adds a text message to a room.
@@ -152,12 +170,12 @@ func (s *MemoryStore) ListRooms() []*chat.Room {
 //
 // No lock here: GetRoom and GetUser lock for themselves, and the room has its
 // own lock for AddMessage. Locking here too would deadlock (locking twice).
-func (s *MemoryStore) PostMessage(roomID chat.RoomID, author chat.UserID, text string) (chat.Message, error) {
-	room, err := s.GetRoom(roomID)
+func (s *MemoryStore) PostMessage(ctx context.Context, roomID chat.RoomID, author chat.UserID, text string) (chat.Message, error) {
+	room, err := s.GetRoom(ctx, roomID)
 	if err != nil {
 		return chat.Message{}, err
 	}
-	user, err := s.GetUser(author)
+	user, err := s.GetUser(ctx, author)
 	if err != nil {
 		return chat.Message{}, err
 	}

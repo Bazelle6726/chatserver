@@ -17,7 +17,7 @@ func Auth(s store.Store) gin.HandlerFunc {
 		if id == "" {
 			id = c.Query("user") //fallback to query param
 		} //if it's empty, or s.GetUser can't find that user, the request is stopped
-		user, err := s.GetUser(chat.UserID(id))
+		user, err := s.GetUser(c.Request.Context(), chat.UserID(id))
 		if err != nil {
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "invalid user ID"})
 			return

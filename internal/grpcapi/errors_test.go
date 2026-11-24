@@ -1,6 +1,7 @@
 package grpcapi
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"testing"
@@ -21,6 +22,8 @@ func TestToStatus(t *testing.T) {
 		{fmt.Errorf("room %q: %w", "r-9", chat.ErrRoomNotFound), codes.NotFound},
 		{chat.ErrAlreadyExists, codes.AlreadyExists},
 		{chat.ErrNotMember, codes.PermissionDenied},
+		{context.Canceled, codes.Canceled},
+		{fmt.Errorf("listing rooms: %w", context.DeadlineExceeded), codes.DeadlineExceeded},
 		{errors.New("disk on fire"), codes.Internal},
 	}
 	for _, tt := range tests {

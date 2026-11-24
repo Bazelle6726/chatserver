@@ -41,7 +41,7 @@ func (a *API) createRoom(c *gin.Context) {
 		writeError(c, invalid("max_history", "must be 1-1000"))
 		return
 	}
-	room, err := a.store.CreateRoom(req.Name, req.MaxHistory)
+	room, err := a.store.CreateRoom(c.Request.Context(), req.Name, req.MaxHistory)
 	if err != nil {
 		writeError(c, err)
 		return
@@ -51,7 +51,11 @@ func (a *API) createRoom(c *gin.Context) {
 
 // GET /rooms (logged in)
 func (a *API) listRooms(c *gin.Context) {
-	rooms := a.store.ListRooms()
+	rooms, err := a.store.ListRooms(c.Request.Context())
+	if err != nil {
+		writeError(c, err)
+		return
+	}
 	dtos := make([]roomDTO, len(rooms))
 	pbRooms := make([]*pb.Room, len(rooms))
 	for i, room := range rooms {
@@ -63,7 +67,7 @@ func (a *API) listRooms(c *gin.Context) {
 
 // POST /rooms/:id/members (logged in) - the current user joins the room.
 func (a *API) joinRoom(c *gin.Context) {
-	room, err := a.store.GetRoom(chat.RoomID(c.Param("id")))
+	room, err := a.store.GetRoom(c.Request.Context(), chat.RoomID(c.Param("id")))
 	if err != nil {
 		writeError(c, err)
 		return
@@ -87,7 +91,7 @@ func (a *API) postMessage(c *gin.Context) {
 		writeError(c, err)
 		return
 	}
-	posted, err := a.store.PostMessage(chat.RoomID(c.Param("id")), currentUser(c).ID, req.Text)
+	posted, err := a.store.PostMessage(c.Request.Context(), chat.RoomID(c.Param("id")), currentUser(c).ID, req.Text)
 	if err != nil {
 		writeError(c, err)
 		return
@@ -102,7 +106,7 @@ func (a *API) postMessage(c *gin.Context) {
 // joined it. Reading a room (history or live feed) needs membership, the
 // same as posting to it.
 func (a *API) memberRoom(c *gin.Context) (*chat.Room, error) {
-	room, err := a.store.GetRoom(chat.RoomID(c.Param("id")))
+	room, err := a.store.GetRoom(c.Request.Context(), chat.RoomID(c.Param("id")))
 	if err != nil {
 		return nil, err
 	}

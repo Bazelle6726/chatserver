@@ -4,6 +4,8 @@
 package grpcapi
 
 import (
+	"context"
+
 	"chatserver/internal/chat"
 	"chatserver/internal/hub"
 	"chatserver/internal/pb"
@@ -49,8 +51,8 @@ func (s *Server) WithModeration(banned func(string) bool) *Server {
 
 // memberRoom looks up a room and checks user has joined it. Reading a room
 // (History, Watch) needs membership, the same as posting to it.
-func (s *Server) memberRoom(user chat.UserID, id string) (*chat.Room, error) {
-	room, err := s.store.GetRoom(chat.RoomID(id))
+func (s *Server) memberRoom(ctx context.Context, user chat.UserID, id string) (*chat.Room, error) {
+	room, err := s.store.GetRoom(ctx, chat.RoomID(id))
 	if err != nil {
 		return nil, err
 	}
@@ -76,8 +78,8 @@ func (s *Server) hideBanned(ms []chat.Message) []chat.Message {
 
 // post stores a message and hands it to the live feed. PostMessage, Import and
 // Converse all post messages, so they share this.
-func (s *Server) post(author chat.UserID, room string, text string) (chat.Message, error) {
-	m, err := s.store.PostMessage(chat.RoomID(room), author, text)
+func (s *Server) post(ctx context.Context, author chat.UserID, room string, text string) (chat.Message, error) {
+	m, err := s.store.PostMessage(ctx, chat.RoomID(room), author, text)
 	if err != nil {
 		return chat.Message{}, err
 	}

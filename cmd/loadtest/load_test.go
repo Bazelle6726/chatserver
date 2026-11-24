@@ -50,7 +50,7 @@ func users(t *testing.T, s *store.MemoryStore, prefix string, n int) []string {
 	t.Helper()
 	var ids []string
 	for i := range n {
-		u, err := s.CreateUser(prefix + string(rune('a'+i)))
+		u, err := s.CreateUser(t.Context(), prefix+string(rune('a'+i)))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -64,7 +64,7 @@ func TestRun(t *testing.T) {
 	client, s := startServer(t)
 	posters := users(t, s, "poster", 2)
 	watchers := users(t, s, "watcher", 5)
-	room, err := s.CreateRoom("loadroom", 1000)
+	room, err := s.CreateRoom(t.Context(), "loadroom", 1000)
 	if err != nil {
 		t.Fatal(err)
 	}

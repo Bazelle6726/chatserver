@@ -19,7 +19,7 @@ func (s *Server) Watch(req *pb.WatchRequest, stream grpc.ServerStreamingServer[p
 		return status.Error(codes.Unavailable, "live delivery is off")
 	}
 	ctx := stream.Context()
-	room, err := s.memberRoom(currentUser(ctx).ID, req.GetRoomId()) // only members may watch
+	room, err := s.memberRoom(ctx, currentUser(ctx).ID, req.GetRoomId()) // only members may watch
 	if err != nil {
 		return toStatus(err)
 	}
