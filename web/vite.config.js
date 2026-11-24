@@ -9,6 +9,6 @@ const api = "http://localhost:8080";
 export default defineConfig({
   plugins: [react()],
   server: {
-    proxy: { "/users": api, "/rooms": api, "/admin": api },
+    proxy: { "/users": api, "/sessions": api, "/me": api, "/rooms": api, "/admin": api },
   },
 });

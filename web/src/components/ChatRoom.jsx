@@ -26,7 +26,7 @@ export default function ChatRoom({ me, room, onJoined, onStatus, onError }) {
     (async () => {
       try {
         try {
-          await api("POST", `/rooms/${room.id}/members`, { userId: me.id });
+          await api("POST", `/rooms/${room.id}/members`);
         } catch (e) {
           if (!(e instanceof ApiError && e.status === 409)) throw e; // 409 = already a member
         }
@@ -34,12 +34,12 @@ export default function ChatRoom({ me, room, onJoined, onStatus, onError }) {
         onJoined();
 
         // Watch BEFORE loading the history, so nothing posted in between is lost.
-        source = watchRoom(room.id, me.id);
+        source = watchRoom(room.id);
         source.addEventListener("message", (ev) => add([JSON.parse(ev.data)]));
         source.onopen = () => onStatus(`live in ${room.name}`);
         source.onerror = () => onError(new Error("live feed disconnected: reconnecting…"));
 
-        add(await api("GET", `/rooms/${room.id}/messages?limit=50`, { userId: me.id }));
+        add(await api("GET", `/rooms/${room.id}/messages?limit=50`));
         if (!cancelled) setReady(true);
       } catch (e) {
         onError(e);
@@ -62,7 +62,7 @@ export default function ChatRoom({ me, room, onJoined, onStatus, onError }) {
     e.preventDefault();
     if (!text.trim()) return;
     try {
-      await api("POST", `/rooms/${room.id}/messages`, { body: { text }, userId: me.id });
+      await api("POST", `/rooms/${room.id}/messages`, { body: { text } });
       setText(""); // the live feed shows it, filtered like everyone else's
     } catch (err) {
       onError(err);

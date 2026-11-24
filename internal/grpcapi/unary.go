@@ -13,12 +13,27 @@ import (
 // value. The generated getters (req.GetName()) are safe even on a nil
 // request. On failure, return nil and toStatus(err).
 
-func (s *Server) CreateUser(ctx context.Context, req *pb.CreateUserRequest) (*pb.User, error) {
-	u, err := s.svc.CreateUser(ctx, req.GetName())
+// CreateUser signs up and logs in: the reply carries a session token.
+func (s *Server) CreateUser(ctx context.Context, req *pb.CreateUserRequest) (*pb.AuthResponse, error) {
+	u, token, err := s.svc.Register(ctx, req.GetName(), req.GetPassword())
 	if err != nil {
 		return nil, toStatus(err)
 	}
-	return pbconv.User(u), nil
+	return &pb.AuthResponse{User: pbconv.User(u), Token: token}, nil
+}
+
+func (s *Server) Login(ctx context.Context, req *pb.LoginRequest) (*pb.AuthResponse, error) {
+	u, token, err := s.svc.Login(ctx, req.GetName(), req.GetPassword())
+	if err != nil {
+		return nil, toStatus(err)
+	}
+	return &pb.AuthResponse{User: pbconv.User(u), Token: token}, nil
+}
+
+// Logout ends the session this call was made with.
+func (s *Server) Logout(ctx context.Context, req *pb.LogoutRequest) (*pb.LogoutResponse, error) {
+	s.svc.Logout(currentToken(ctx))
+	return &pb.LogoutResponse{}, nil
 }
 
 func (s *Server) GetUser(ctx context.Context, req *pb.GetUserRequest) (*pb.User, error) {

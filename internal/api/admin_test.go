@@ -17,8 +17,6 @@ import (
 
 	"chatserver/internal/moderation"
 	"chatserver/internal/ratelimit"
-	"chatserver/internal/service"
-	"chatserver/internal/store"
 )
 
 // adminServer runs the API with a banned-word list saved to a temp file.
@@ -33,7 +31,7 @@ func newAdminServer(t *testing.T, token string) *adminServer {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "banned_words.txt")
 	words := moderation.New("scam", "spam")
-	a := New(service.New(store.NewMemoryStore()), ratelimit.Limits{}).WithModeration(words, path, token)
+	a := New(newSvc(), ratelimit.Limits{}).WithModeration(words, path, token)
 	return &adminServer{t: t, router: a.Router(), words: words, path: path}
 }
 

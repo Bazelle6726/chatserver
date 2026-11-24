@@ -31,6 +31,8 @@ func toStatus(err error) error {
 		return status.Error(codes.AlreadyExists, err.Error())
 	case errors.Is(err, chat.ErrNotMember):
 		return status.Error(codes.PermissionDenied, err.Error())
+	case errors.Is(err, service.ErrUnauthenticated), errors.Is(err, service.ErrBadCredentials):
+		return status.Error(codes.Unauthenticated, err.Error())
 	case errors.Is(err, service.ErrLiveOff):
 		return status.Error(codes.Unavailable, err.Error())
 	case errors.Is(err, ratelimit.ErrLimited):

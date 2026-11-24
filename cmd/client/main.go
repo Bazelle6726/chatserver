@@ -1,8 +1,10 @@
 // Command client is a small gRPC client for the chat server, for trying out
 // all four kinds of call from the terminal. Run it with no arguments for help.
 //
-//	go run ./cmd/client create-user alice
-//	go run ./cmd/client -user u-1 watch r-1
+//	go run ./cmd/client create-user alice my-password    (prints a token)
+//	go run ./cmd/client -token <token> watch r-1
+//
+// Instead of -token, you can set the CHAT_TOKEN environment variable.
 package main
 
 import (
@@ -23,10 +25,14 @@ import (
 	"chatserver/internal/pb"
 )
 
-const usage = `usage: go run ./cmd/client [-addr localhost:9090] [-user u-1] <command> [args]
+const usage = `usage: go run ./cmd/client [-addr localhost:9090] [-token <token>] <command> [args]
+
+The token comes from create-user or login; -token defaults to $CHAT_TOKEN.
 
 unary:
-  create-user <name>          (no -user needed)
+  create-user <name> <password>   sign up; prints your token (no -token needed)
+  login <name> <password>         prints a new token (no -token needed)
+  logout                          ends the -token session
   create-room <name>
   rooms
   join <room>
@@ -42,7 +48,7 @@ bidirectional streaming:
 
 func main() {
 	addr := flag.String("addr", "localhost:9090", "server address")
-	user := flag.String("user", "", "your user ID, e.g. u-1")
+	token := flag.String("token", os.Getenv("CHAT_TOKEN"), "your session token, from create-user or login")
 	flag.Usage = func() { fmt.Fprint(os.Stderr, usage) }
 	flag.Parse()
 	args := flag.Args()
@@ -60,10 +66,10 @@ func main() {
 	defer conn.Close()
 	c := pb.NewChatServiceClient(conn)
 
-	// The user ID travels as metadata, like the X-User-ID header over HTTP.
+	// The token travels as metadata, like the Authorization header over HTTP.
 	ctx := context.Background()
-	if *user != "" {
-		ctx = metadata.AppendToOutgoingContext(ctx, "x-user-id", *user)
+	if *token != "" {
+		ctx = metadata.AppendToOutgoingContext(ctx, "authorization", "Bearer "+*token)
 	}
 
 	if err := run(ctx, c, args); err != nil {
@@ -84,12 +90,27 @@ func run(ctx context.Context, c pb.ChatServiceClient, args []string) error {
 
 	switch args[0] {
 	case "create-user":
-		need(1)
-		u, err := c.CreateUser(short, &pb.CreateUserRequest{Name: args[1]})
+		need(2)
+		res, err := c.CreateUser(short, &pb.CreateUserRequest{Name: args[1], Password: args[2]})
 		if err != nil {
 			return err
 		}
+		u := res.GetUser()
 		fmt.Printf("created %s (%s), role %v\n", u.GetId(), u.GetName(), u.GetRole())
+		printToken(res.GetToken())
+	case "login":
+		need(2)
+		res, err := c.Login(short, &pb.LoginRequest{Name: args[1], Password: args[2]})
+		if err != nil {
+			return err
+		}
+		fmt.Printf("logged in as %s (%s)\n", res.GetUser().GetId(), res.GetUser().GetName())
+		printToken(res.GetToken())
+	case "logout":
+		if _, err := c.Logout(short, &pb.LogoutRequest{}); err != nil {
+			return err
+		}
+		fmt.Println("logged out")
 	case "create-room":
 		need(1)
 		r, err := c.CreateRoom(short, &pb.CreateRoomRequest{Name: args[1]})
@@ -213,6 +234,11 @@ func converse(ctx context.Context, c pb.ChatServiceClient, room string) error {
 		}
 		printMessage(m)
 	}
+}
+
+// printToken shows a new session token and how to use it.
+func printToken(token string) {
+	fmt.Printf("token: %s\n\nuse it with -token, or set it once (PowerShell):\n  $env:CHAT_TOKEN = %q\n", token, token)
 }
 
 func printMessage(m *pb.Message) {

@@ -5,6 +5,8 @@ import (
 	"testing"
 	"time"
 
+	"golang.org/x/crypto/bcrypt"
+
 	"chatserver/internal/chat"
 	"chatserver/internal/hub"
 	"chatserver/internal/moderation"
@@ -12,16 +14,25 @@ import (
 	"chatserver/internal/store"
 )
 
+// testPassword is every test user's password.
+const testPassword = "correct-horse"
+
+// newTest returns a service with the fastest bcrypt cost, so tests don't
+// spend their time hashing.
+func newTest() *Service {
+	return New(store.NewMemoryStore()).WithPasswordCost(bcrypt.MinCost)
+}
+
 // setup returns a service with users alice and eve, and a room "general"
 // that only alice has joined.
 func setup(t *testing.T, svc *Service) (alice, eve chat.UserID, room chat.RoomID) {
 	t.Helper()
 	ctx := t.Context()
-	a, err := svc.CreateUser(ctx, "alice")
+	a, _, err := svc.Register(ctx, "alice", testPassword)
 	if err != nil {
 		t.Fatal(err)
 	}
-	e, err := svc.CreateUser(ctx, "eve")
+	e, _, err := svc.Register(ctx, "eve", testPassword)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -44,7 +55,7 @@ func wantValidation(t *testing.T, err error, field, what string) {
 }
 
 func TestCreateRoomMaxHistory(t *testing.T) {
-	svc := New(store.NewMemoryStore())
+	svc := newTest()
 	ctx := t.Context()
 	for _, bad := range []int{-1, MaxMaxHistory + 1} {
 		_, err := svc.CreateRoom(ctx, "room", bad)
@@ -56,7 +67,7 @@ func TestCreateRoomMaxHistory(t *testing.T) {
 }
 
 func TestHistory(t *testing.T) {
-	svc := New(store.NewMemoryStore()).WithModeration(moderation.New("scam").IsBanned)
+	svc := newTest().WithModeration(moderation.New("scam").IsBanned)
 	alice, eve, room := setup(t, svc)
 	ctx := t.Context()
 	for i := range DefaultLimit + 5 {
@@ -91,7 +102,7 @@ func TestHistory(t *testing.T) {
 
 func TestPostMessagePublishes(t *testing.T) {
 	var published []chat.Message
-	svc := New(store.NewMemoryStore()).WithHub(nil, func(m chat.Message) { published = append(published, m) })
+	svc := newTest().WithHub(nil, func(m chat.Message) { published = append(published, m) })
 	alice, eve, room := setup(t, svc)
 
 	m, err := svc.PostMessage(t.Context(), alice, room, "hi")
@@ -110,13 +121,13 @@ func TestPostMessagePublishes(t *testing.T) {
 }
 
 func TestWatch(t *testing.T) {
-	if _, _, err := New(store.NewMemoryStore()).Watch(t.Context(), "u-1", "r-1"); !errors.Is(err, ErrLiveOff) {
+	if _, _, err := newTest().Watch(t.Context(), "u-1", "r-1"); !errors.Is(err, ErrLiveOff) {
 		t.Errorf("Watch without a hub = %v, want ErrLiveOff", err)
 	}
 
 	h := hub.NewHub(4)
 	go h.Run(t.Context())
-	svc := New(store.NewMemoryStore()).WithHub(h, h.Publish)
+	svc := newTest().WithHub(h, h.Publish)
 	alice, eve, room := setup(t, svc)
 	ctx := t.Context()
 
@@ -153,7 +164,7 @@ func TestWatch(t *testing.T) {
 
 // The post limit applies per user, however the message is sent.
 func TestPostLimit(t *testing.T) {
-	svc := New(store.NewMemoryStore()).WithPostLimit(ratelimit.New(1, 3)) // bursts of 3
+	svc := newTest().WithPostLimit(ratelimit.New(1, 3)) // bursts of 3
 	alice, eve, room := setup(t, svc)
 	ctx := t.Context()
 	if err := svc.JoinRoom(ctx, eve, room); err != nil {
@@ -173,5 +184,52 @@ func TestPostLimit(t *testing.T) {
 	ms, _ := svc.History(ctx, alice, room, 0)
 	if len(ms) != 4 {
 		t.Errorf("history has %d messages, want 4: a refused post must not be stored", len(ms))
+	}
+}
+
+func TestRegisterLoginLogout(t *testing.T) {
+	svc := newTest()
+	ctx := t.Context()
+
+	u, token, err := svc.Register(ctx, "alice", testPassword)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, err := svc.Authenticate(ctx, token); err != nil || got.ID != u.ID {
+		t.Fatalf("Authenticate(sign-up token) = %v, %v; want alice", got, err)
+	}
+
+	_, _, err = svc.Register(ctx, "bob", "short")
+	wantValidation(t, err, "password", "a short password")
+	_, _, err = svc.Register(ctx, "x", testPassword)
+	wantValidation(t, err, "name", "a short name")
+
+	// Logging in works by name, ignoring case, and gives a new token.
+	_, token2, err := svc.Login(ctx, "ALICE", testPassword)
+	if err != nil {
+		t.Fatalf("Login: %v", err)
+	}
+	if token2 == token {
+		t.Error("a new login reused the old token")
+	}
+
+	// Wrong password and unknown name fail the same way.
+	if _, _, err := svc.Login(ctx, "alice", "wrong-password"); !errors.Is(err, ErrBadCredentials) {
+		t.Errorf("wrong password = %v, want ErrBadCredentials", err)
+	}
+	if _, _, err := svc.Login(ctx, "nobody", testPassword); !errors.Is(err, ErrBadCredentials) {
+		t.Errorf("unknown name = %v, want ErrBadCredentials", err)
+	}
+
+	// Logging out ends that session only.
+	svc.Logout(token)
+	if _, err := svc.Authenticate(ctx, token); !errors.Is(err, ErrUnauthenticated) {
+		t.Errorf("Authenticate after Logout = %v, want ErrUnauthenticated", err)
+	}
+	if _, err := svc.Authenticate(ctx, token2); err != nil {
+		t.Errorf("the other session ended too: %v", err)
+	}
+	if _, err := svc.Authenticate(ctx, ""); !errors.Is(err, ErrUnauthenticated) {
+		t.Errorf("Authenticate(\"\") = %v, want ErrUnauthenticated", err)
 	}
 }

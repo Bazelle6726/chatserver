@@ -66,9 +66,10 @@ func main() {
 // Names get a fresh tag each run, so you can run it again without clashes.
 func setup(ctx context.Context, client pb.ChatServiceClient, posters, watchers, history int) (Config, error) {
 	tag := fmt.Sprintf("lt%d", time.Now().Unix()%1000000)
+	// newUser signs a user up and returns their session token.
 	newUser := func(name string) (string, error) {
-		u, err := client.CreateUser(ctx, &pb.CreateUserRequest{Name: name})
-		return u.GetId(), err
+		res, err := client.CreateUser(ctx, &pb.CreateUserRequest{Name: name, Password: "load-test-password"})
+		return res.GetToken(), err
 	}
 
 	var cfg Config

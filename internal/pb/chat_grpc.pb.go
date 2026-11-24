@@ -36,6 +36,8 @@ const _ = grpc.SupportPackageIsVersion9
 
 const (
 	ChatService_CreateUser_FullMethodName  = "/chat.v1.ChatService/CreateUser"
+	ChatService_Login_FullMethodName       = "/chat.v1.ChatService/Login"
+	ChatService_Logout_FullMethodName      = "/chat.v1.ChatService/Logout"
 	ChatService_GetUser_FullMethodName     = "/chat.v1.ChatService/GetUser"
 	ChatService_CreateRoom_FullMethodName  = "/chat.v1.ChatService/CreateRoom"
 	ChatService_ListRooms_FullMethodName   = "/chat.v1.ChatService/ListRooms"
@@ -51,26 +53,11 @@ const (
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 //
-// TODO(48): write the service block, then run protoc (see the top of this file).
-//
-// The calls, exactly as the Go code and tests expect them:
-//
-//	rpc name      request                       response
-//	----------    --------------------------    -----------------------
-//	CreateUser    CreateUserRequest             User
-//	GetUser       GetUserRequest                User
-//	CreateRoom    CreateRoomRequest             Room
-//	ListRooms     ListRoomsRequest              ListRoomsResponse
-//	JoinRoom      JoinRoomRequest               JoinRoomResponse
-//	PostMessage   PostMessageRequest            Message
-//	History       HistoryRequest                HistoryResponse
-//	Watch         WatchRequest                  stream Message          (server streaming)
-//	Import        stream PostMessageRequest     ImportSummary           (client streaming)
-//	Converse      stream ConverseRequest        stream Message          (bidirectional)
-//
-// The syntax:
+// CreateUser and Login need no session; every other call needs one.
 type ChatServiceClient interface {
-	CreateUser(ctx context.Context, in *CreateUserRequest, opts ...grpc.CallOption) (*User, error)
+	CreateUser(ctx context.Context, in *CreateUserRequest, opts ...grpc.CallOption) (*AuthResponse, error)
+	Login(ctx context.Context, in *LoginRequest, opts ...grpc.CallOption) (*AuthResponse, error)
+	Logout(ctx context.Context, in *LogoutRequest, opts ...grpc.CallOption) (*LogoutResponse, error)
 	GetUser(ctx context.Context, in *GetUserRequest, opts ...grpc.CallOption) (*User, error)
 	CreateRoom(ctx context.Context, in *CreateRoomRequest, opts ...grpc.CallOption) (*Room, error)
 	ListRooms(ctx context.Context, in *ListRoomsRequest, opts ...grpc.CallOption) (*ListRoomsResponse, error)
@@ -90,10 +77,30 @@ func NewChatServiceClient(cc grpc.ClientConnInterface) ChatServiceClient {
 	return &chatServiceClient{cc}
 }
 
-func (c *chatServiceClient) CreateUser(ctx context.Context, in *CreateUserRequest, opts ...grpc.CallOption) (*User, error) {
+func (c *chatServiceClient) CreateUser(ctx context.Context, in *CreateUserRequest, opts ...grpc.CallOption) (*AuthResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(User)
+	out := new(AuthResponse)
 	err := c.cc.Invoke(ctx, ChatService_CreateUser_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *chatServiceClient) Login(ctx context.Context, in *LoginRequest, opts ...grpc.CallOption) (*AuthResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(AuthResponse)
+	err := c.cc.Invoke(ctx, ChatService_Login_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *chatServiceClient) Logout(ctx context.Context, in *LogoutRequest, opts ...grpc.CallOption) (*LogoutResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(LogoutResponse)
+	err := c.cc.Invoke(ctx, ChatService_Logout_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -209,26 +216,11 @@ type ChatService_ConverseClient = grpc.BidiStreamingClient[ConverseRequest, Mess
 // All implementations must embed UnimplementedChatServiceServer
 // for forward compatibility.
 //
-// TODO(48): write the service block, then run protoc (see the top of this file).
-//
-// The calls, exactly as the Go code and tests expect them:
-//
-//	rpc name      request                       response
-//	----------    --------------------------    -----------------------
-//	CreateUser    CreateUserRequest             User
-//	GetUser       GetUserRequest                User
-//	CreateRoom    CreateRoomRequest             Room
-//	ListRooms     ListRoomsRequest              ListRoomsResponse
-//	JoinRoom      JoinRoomRequest               JoinRoomResponse
-//	PostMessage   PostMessageRequest            Message
-//	History       HistoryRequest                HistoryResponse
-//	Watch         WatchRequest                  stream Message          (server streaming)
-//	Import        stream PostMessageRequest     ImportSummary           (client streaming)
-//	Converse      stream ConverseRequest        stream Message          (bidirectional)
-//
-// The syntax:
+// CreateUser and Login need no session; every other call needs one.
 type ChatServiceServer interface {
-	CreateUser(context.Context, *CreateUserRequest) (*User, error)
+	CreateUser(context.Context, *CreateUserRequest) (*AuthResponse, error)
+	Login(context.Context, *LoginRequest) (*AuthResponse, error)
+	Logout(context.Context, *LogoutRequest) (*LogoutResponse, error)
 	GetUser(context.Context, *GetUserRequest) (*User, error)
 	CreateRoom(context.Context, *CreateRoomRequest) (*Room, error)
 	ListRooms(context.Context, *ListRoomsRequest) (*ListRoomsResponse, error)
@@ -248,8 +240,14 @@ type ChatServiceServer interface {
 // pointer dereference when methods are called.
 type UnimplementedChatServiceServer struct{}
 
-func (UnimplementedChatServiceServer) CreateUser(context.Context, *CreateUserRequest) (*User, error) {
+func (UnimplementedChatServiceServer) CreateUser(context.Context, *CreateUserRequest) (*AuthResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method CreateUser not implemented")
+}
+func (UnimplementedChatServiceServer) Login(context.Context, *LoginRequest) (*AuthResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method Login not implemented")
+}
+func (UnimplementedChatServiceServer) Logout(context.Context, *LogoutRequest) (*LogoutResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method Logout not implemented")
 }
 func (UnimplementedChatServiceServer) GetUser(context.Context, *GetUserRequest) (*User, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetUser not implemented")
@@ -313,6 +311,42 @@ func _ChatService_CreateUser_Handler(srv interface{}, ctx context.Context, dec f
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(ChatServiceServer).CreateUser(ctx, req.(*CreateUserRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _ChatService_Login_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(LoginRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ChatServiceServer).Login(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ChatService_Login_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ChatServiceServer).Login(ctx, req.(*LoginRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _ChatService_Logout_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(LogoutRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ChatServiceServer).Logout(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ChatService_Logout_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ChatServiceServer).Logout(ctx, req.(*LogoutRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -460,6 +494,14 @@ var ChatService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "CreateUser",
 			Handler:    _ChatService_CreateUser_Handler,
+		},
+		{
+			MethodName: "Login",
+			Handler:    _ChatService_Login_Handler,
+		},
+		{
+			MethodName: "Logout",
+			Handler:    _ChatService_Logout_Handler,
 		},
 		{
 			MethodName: "GetUser",

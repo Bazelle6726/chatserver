@@ -9,8 +9,6 @@ import (
 	"time"
 
 	"chatserver/internal/ratelimit"
-	"chatserver/internal/service"
-	"chatserver/internal/store"
 )
 
 // A body over MaxBodyBytes must be refused with 413, whether the client says
@@ -39,27 +37,40 @@ func TestBodyTooLarge(t *testing.T) {
 	}
 
 	// A normal body still works.
-	expectStatus(t, s.do(http.MethodPost, "/users", map[string]string{"name": "alice"}, ""), http.StatusCreated, "normal body")
+	expectStatus(t, s.do(http.MethodPost, "/users", map[string]string{"name": "alice", "password": testPassword}, ""), http.StatusCreated, "normal body")
 }
 
 // Sign-ups are limited per IP; other public routes only by the looser
 // per-IP limit.
 func TestSignUpLimit(t *testing.T) {
 	limits := ratelimit.Limits{SignUps: ratelimit.New(ratelimit.Per(2, time.Minute), 2)}
-	s := &testServer{t: t, router: New(service.New(store.NewMemoryStore()), limits).Router()}
+	s := &testServer{t: t, router: New(newSvc(), limits).Router()}
 
 	id := s.mustUser("alice")
 	s.mustUser("bobby")
-	expectStatus(t, s.do("POST", "/users", map[string]string{"name": "carol"}, ""), http.StatusTooManyRequests, "3rd sign-up in a minute")
-	expectStatus(t, s.do("GET", "/users/"+id, nil, ""), http.StatusOK, "looking a user up isn't a sign-up")
+	expectStatus(t, s.do("POST", "/users", map[string]string{"name": "carol", "password": testPassword}, ""), http.StatusTooManyRequests, "3rd sign-up in a minute")
+	expectStatus(t, s.do("GET", "/users/"+s.idOf(id), nil, id), http.StatusOK, "looking a user up isn't a sign-up")
 }
 
-// Requests without a login are limited per IP.
+// Requests without a login (here, failed logins) are limited per IP.
 func TestPerIPLimit(t *testing.T) {
 	limits := ratelimit.Limits{PerIP: ratelimit.New(1, 3)}
-	s := &testServer{t: t, router: New(service.New(store.NewMemoryStore()), limits).Router()}
+	s := &testServer{t: t, router: New(newSvc(), limits).Router()}
+	wrong := map[string]string{"name": "nobody", "password": testPassword}
 	for i := range 3 {
-		expectStatus(t, s.do("GET", "/users/u-404", nil, ""), http.StatusNotFound, fmt.Sprint("lookup ", i+1))
+		expectStatus(t, s.do("POST", "/sessions", wrong, ""), http.StatusUnauthorized, fmt.Sprint("login ", i+1))
 	}
-	expectStatus(t, s.do("GET", "/users/u-404", nil, ""), http.StatusTooManyRequests, "4th lookup in a burst of 3")
+	expectStatus(t, s.do("POST", "/sessions", wrong, ""), http.StatusTooManyRequests, "4th login in a burst of 3")
+}
+
+// Login attempts have a stricter limit of their own.
+func TestLoginLimit(t *testing.T) {
+	limits := ratelimit.Limits{Logins: ratelimit.New(ratelimit.Per(2, time.Minute), 2)}
+	s := &testServer{t: t, router: New(newSvc(), limits).Router()}
+	s.mustUser("alice")
+	wrong := map[string]string{"name": "alice", "password": "wrong-password"}
+	expectStatus(t, s.do("POST", "/sessions", wrong, ""), http.StatusUnauthorized, "guess 1")
+	expectStatus(t, s.do("POST", "/sessions", wrong, ""), http.StatusUnauthorized, "guess 2")
+	right := map[string]string{"name": "alice", "password": testPassword}
+	expectStatus(t, s.do("POST", "/sessions", right, ""), http.StatusTooManyRequests, "3rd login in a minute, even with the right password")
 }

@@ -21,15 +21,18 @@ func (a *API) Router() *gin.Engine {
 	}
 	r.Use(gin.Recovery(), gin.Logger(), LimitBody(MaxBodyBytes))
 
-	// Public: anyone can call these, so they're limited per IP address.
-	// Creating an account has a stricter limit of its own on top.
+	// Public: signing up and logging in need no session, so they're limited
+	// per IP address, each with a stricter limit of its own on top.
 	public := r.Group("/", LimitByIP(a.limits.PerIP))
 	public.POST("/users", LimitByIP(a.limits.SignUps), a.createUser)
-	public.GET("/users/:id", a.getUser)
+	public.POST("/sessions", LimitByIP(a.limits.Logins), a.login)
 
 	// Logged in: limited per user. RateLimit must come after Auth, which
 	// says who the user is.
 	auth := r.Group("/", Auth(a.svc), RateLimit(a.limits.PerUser))
+	auth.DELETE("/sessions", a.logout)
+	auth.GET("/me", a.me)
+	auth.GET("/users/:id", a.getUser)
 	auth.POST("/rooms", a.createRoom)
 	auth.GET("/rooms", a.listRooms)
 	auth.POST("/rooms/:id/members", a.joinRoom)

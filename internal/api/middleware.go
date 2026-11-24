@@ -1,7 +1,6 @@
 package api
 
 import (
-	"chatserver/internal/chat"
 	"chatserver/internal/ratelimit"
 	"chatserver/internal/service"
 	"net/http"
@@ -9,21 +8,22 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// Auth identifies the caller from the X-User-ID header.
+// Auth identifies the caller from their session token: an
+// "Authorization: Bearer <token>" header, or the session cookie the browser
+// sends by itself (which is also how the live feed's EventSource, which
+// can't set headers, gets logged in).
 //
-// It's a function that RETURNS the middleware: a closure that captures s.
+// It's a function that RETURNS the middleware: a closure that captures svc.
 func Auth(svc *service.Service) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		id := c.GetHeader("X-User-ID")
-		if id == "" {
-			id = c.Query("user") // for EventSource, which can't set headers
-		}
-		user, err := svc.GetUser(c.Request.Context(), chat.UserID(id))
+		token := sessionToken(c)
+		user, err := svc.Authenticate(c.Request.Context(), token)
 		if err != nil {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "invalid user ID"})
+			writeError(c, err)
 			return
 		}
-		c.Set(userKey, user) // for currentUser in later handlers
+		c.Set(userKey, user)   // for currentUser in later handlers
+		c.Set(tokenKey, token) // for logout
 		c.Next()
 	}
 }

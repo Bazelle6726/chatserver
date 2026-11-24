@@ -83,8 +83,11 @@ func writeError(c *gin.Context, err error) {
 	c.AbortWithStatusJSON(status, body)
 }
 
-// userKey is where the Auth middleware stores the logged-in user.
-const userKey = "user"
+// Where the Auth middleware stores the logged-in user and their token.
+const (
+	userKey  = "user"
+	tokenKey = "token"
+)
 
 // currentUser returns the user that Auth put on the context.
 // Only call it in handlers that run after Auth.

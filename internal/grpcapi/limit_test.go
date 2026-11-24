@@ -5,6 +5,7 @@ import (
 	"net"
 	"testing"
 
+	"golang.org/x/crypto/bcrypt"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
@@ -26,8 +27,7 @@ func ok(context.Context, any) (any, error) { return "ok", nil }
 // The gRPC API applies the same limits as the HTTP API: sign-ups per IP,
 // and every call per user.
 func TestInterceptorLimits(t *testing.T) {
-	st := store.NewMemoryStore()
-	svc := service.New(st)
+	svc := service.New(store.NewMemoryStore()).WithPasswordCost(bcrypt.MinCost)
 	limits := ratelimit.Limits{
 		SignUps: ratelimit.New(1, 1),
 		PerUser: ratelimit.New(1, 2),
@@ -45,8 +45,11 @@ func TestInterceptorLimits(t *testing.T) {
 		t.Errorf("sign-up from another IP: %v", err)
 	}
 
-	u, _ := st.CreateUser(t.Context(), "alice")
-	asAlice := metadata.NewIncomingContext(fromIP("10.0.0.1"), metadata.Pairs("x-user-id", string(u.ID)))
+	_, token, err := svc.Register(t.Context(), "alice", testPassword)
+	if err != nil {
+		t.Fatal(err)
+	}
+	asAlice := metadata.NewIncomingContext(fromIP("10.0.0.1"), metadata.Pairs("authorization", "Bearer "+token))
 	for i := range 2 {
 		if _, err := intercept(asAlice, nil, listRooms, ok); err != nil {
 			t.Fatalf("call %d: %v", i+1, err)

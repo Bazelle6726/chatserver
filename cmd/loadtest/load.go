@@ -17,8 +17,8 @@ import (
 // Config describes one load test.
 type Config struct {
 	Room     string
-	Posters  []string      // user IDs that post (members of Room)
-	Watchers []string      // user IDs that watch Room
+	Posters  []string      // session tokens of users who post (members of Room)
+	Watchers []string      // session tokens of users who watch Room
 	Rate     float64       // posts per second, per poster
 	Duration time.Duration // how long the posters post for
 }
@@ -33,8 +33,8 @@ type Result struct {
 }
 
 // as returns a context that makes calls as user.
-func as(ctx context.Context, user string) context.Context {
-	return metadata.AppendToOutgoingContext(ctx, "x-user-id", user)
+func as(ctx context.Context, token string) context.Context {
+	return metadata.AppendToOutgoingContext(ctx, "authorization", "Bearer "+token)
 }
 
 // run carries out the test in three phases:

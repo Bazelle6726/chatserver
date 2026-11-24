@@ -11,6 +11,8 @@ A multi-room chat server written in Go. Messages are pushed live to everyone wat
 - **REST API** with [Gin](https://github.com/gin-gonic/gin), speaking **JSON or protobuf** depending on the request headers
 - **gRPC API** using all four kinds of call: unary, server streaming, client streaming and bidirectional
 - **Live feed** over Server-Sent Events or gRPC streams
+- **Accounts** with bcrypt-hashed passwords and random session tokens: an HttpOnly cookie in the browser, a Bearer token for everything else
+- **Rate limits** per user, per IP and per posted message, the same over HTTP and gRPC
 - **Moderation**: worker goroutines replace messages containing [banned words](banned_words.txt) with `[removed]`, and admins can change the list while the server runs
 - **Safe under concurrency**, verified with Go's race detector, with **graceful shutdown**
 - **Built-in profiling** with `pprof`, a **load tester** and **benchmarks**
@@ -25,16 +27,16 @@ flowchart LR
     GIN -. any other GET .-> WEB[Embedded web app<br/>web/dist]
     GIN -- admin routes --> ML[Banned-word list<br/>RWMutex]
     ML -. read by .-> P
-    GIN --> H[Handlers<br/>api + grpcapi]
-    GRPC --> H
-    H --> S[(Store<br/>users, rooms, history<br/>locked)]
-    H --> P[Worker pool<br/>filters banned words]
+    GIN --> SVC[Service<br/>rules, logins, limits]
+    GRPC --> SVC
+    SVC --> S[(Store<br/>users, rooms, history<br/>locked)]
+    SVC --> P[Worker pool<br/>filters banned words]
     P --> HUB[Hub goroutine<br/>who watches which room]
     HUB --> O[Watcher outboxes<br/>one buffered channel each]
     O --> W[Stream handlers<br/>SSE, Watch, Converse]
 ```
 
-A posted message is saved to the room's history, filtered by the worker pool, then handed to the **hub**: a single goroutine that owns the list of watchers and copies the message to each one's outbox. A watcher that falls too far behind is dropped, so one slow client can't hold up a room.
+Both front doors are thin: they translate requests into calls on one shared **service**, which holds every rule (limits, membership, moderation, logins). A posted message is saved to the room's history, filtered by the worker pool, then handed to the **hub**: a single goroutine that owns the list of watchers and copies the message to each one's outbox. A watcher that falls too far behind is dropped, so one slow client can't hold up a room.
 
 ## Quick start
 
@@ -48,8 +50,8 @@ go run ./cmd/server
 
 Open **http://localhost:8080/** in two windows, a normal one and a private one, so each has its own sign-in:
 
-1. **Window 1:** create the user `alice`, then add a room `general`.
-2. **Window 2:** create `bob`, then click `general`.
+1. **Window 1:** type the name `alice` and a password of 8 or more characters, click **Create account**, then add a room `general`.
+2. **Window 2:** create `bob` the same way, then click `general`.
 3. **Chat:** messages appear instantly in both. "cheap scam here" shows as *[removed]*, but "scampi" doesn't.
 
 To use the **admin API** and the app's Moderation panel, set a secret token of at least 16 characters before starting the server:
@@ -98,6 +100,9 @@ chatserver/
 └── internal/
     ├── chat/          the domain: users, rooms, messages, validation, errors
     ├── store/         the Store interface and in-memory implementation
+    ├── service/       the rules both APIs share: rooms, messages, logins, limits
+    ├── auth/          password hashing and sessions
+    ├── ratelimit/     token-bucket rate limits per user or IP
     ├── api/           the HTTP API: routes, middleware, SSE, admin, web app
     ├── grpcapi/       the gRPC server
     ├── pb/            chat.proto and the generated code

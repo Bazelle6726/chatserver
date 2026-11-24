@@ -19,7 +19,12 @@ package service
 import (
 	"context"
 	"errors"
+	"sync"
+	"time"
 
+	"golang.org/x/crypto/bcrypt"
+
+	"chatserver/internal/auth"
 	"chatserver/internal/chat"
 	"chatserver/internal/hub"
 	"chatserver/internal/ratelimit"
@@ -34,9 +39,21 @@ const (
 	MaxLimit          = 500  // the most a history read may return
 )
 
-// ErrLiveOff means the server runs without live delivery (no hub), so a
-// room can't be watched.
-var ErrLiveOff = errors.New("live delivery is off")
+// Errors the front doors turn into status codes.
+var (
+	// ErrLiveOff means the server runs without live delivery (no hub), so a
+	// room can't be watched.
+	ErrLiveOff = errors.New("live delivery is off")
+
+	// ErrBadCredentials is a failed login. It doesn't say whether the name or
+	// the password was wrong, so it can't be used to find out who has an
+	// account.
+	ErrBadCredentials = errors.New("wrong name or password")
+
+	// ErrUnauthenticated means a request carried no session token, or one
+	// that's unknown, logged out or expired.
+	ErrUnauthenticated = errors.New("not logged in, or the session has expired")
+)
 
 // Service is the chat server's logic. Build it with New, then turn on the
 // optional parts with WithHub and WithModeration.
@@ -46,11 +63,27 @@ type Service struct {
 	publish func(m chat.Message) // nil = don't publish (e.g. in some tests)
 	banned  func(string) bool    // nil = no moderation
 	posts   *ratelimit.Limiter   // messages per user, however they're sent; nil = no limit
+
+	sessions  *auth.Sessions
+	cost      int       // bcrypt work factor
+	dummyOnce sync.Once // makes dummyHash, once
+	dummyHash []byte    // checked against when a login names an unknown user
 }
 
-// New builds a service on top of a store.
+// New builds a service on top of a store. Logins last auth.DefaultSessionTTL.
 func New(s store.Store) *Service {
-	return &Service{store: s}
+	return &Service{
+		store:    s,
+		sessions: auth.NewSessions(auth.DefaultSessionTTL, nil),
+		cost:     bcrypt.DefaultCost,
+	}
+}
+
+// WithPasswordCost sets bcrypt's work factor. Tests use bcrypt.MinCost,
+// which is much faster (and much weaker); the default is bcrypt.DefaultCost.
+func (s *Service) WithPasswordCost(cost int) *Service {
+	s.cost = cost
+	return s
 }
 
 // WithHub turns on live delivery: publish is called with every new message
@@ -83,11 +116,93 @@ func invalid(field, reason string) error {
 	return &chat.ValidationError{Field: field, Reason: reason}
 }
 
-// ---- Users ----
+// ---- Users and logins ----
 
-// CreateUser registers a new user.
-func (s *Service) CreateUser(ctx context.Context, name string) (*chat.User, error) {
-	return s.store.CreateUser(ctx, name)
+// Register creates an account and logs it in, returning the new user and a
+// session token.
+func (s *Service) Register(ctx context.Context, name, password string) (*chat.User, string, error) {
+	// Check the cheap things first: hashing takes tens of milliseconds, and
+	// shouldn't be spent on a request that will fail anyway.
+	if err := chat.ValidateName(name); err != nil {
+		return nil, "", err
+	}
+	if err := auth.ValidatePassword(password); err != nil {
+		return nil, "", err
+	}
+	hash, err := auth.HashPassword(password, s.cost)
+	if err != nil {
+		return nil, "", err
+	}
+	u, err := s.store.CreateUser(ctx, name, hash)
+	if err != nil {
+		return nil, "", err
+	}
+	token, err := s.sessions.Start(u.ID)
+	if err != nil {
+		return nil, "", err
+	}
+	return u, token, nil
+}
+
+// Login checks a name and password and starts a session, returning the user
+// and a session token. Any mistake is ErrBadCredentials.
+func (s *Service) Login(ctx context.Context, name, password string) (*chat.User, string, error) {
+	u, err := s.store.UserByName(ctx, name)
+	if errors.Is(err, chat.ErrUserNotFound) {
+		// Check the password anyway, against a hash of nothing in particular,
+		// so a login for an unknown name takes as long as one with a wrong
+		// password. Otherwise the timing would reveal which names exist.
+		auth.CheckPassword(s.dummy(), password)
+		return nil, "", ErrBadCredentials
+	}
+	if err != nil {
+		return nil, "", err
+	}
+	hash, err := s.store.PasswordHash(ctx, u.ID)
+	if err != nil {
+		return nil, "", err
+	}
+	if !auth.CheckPassword(hash, password) {
+		return nil, "", ErrBadCredentials
+	}
+	token, err := s.sessions.Start(u.ID)
+	if err != nil {
+		return nil, "", err
+	}
+	return u, token, nil
+}
+
+// dummy returns a bcrypt hash at the service's cost, made once.
+func (s *Service) dummy() []byte {
+	s.dummyOnce.Do(func() {
+		s.dummyHash, _ = auth.HashPassword("no password matches this", s.cost)
+	})
+	return s.dummyHash
+}
+
+// Logout ends the session with this token. An unknown token is fine.
+func (s *Service) Logout(token string) {
+	s.sessions.End(token)
+}
+
+// Authenticate returns the user a session token belongs to, or
+// ErrUnauthenticated.
+func (s *Service) Authenticate(ctx context.Context, token string) (*chat.User, error) {
+	id, ok := s.sessions.Lookup(token)
+	if !ok {
+		return nil, ErrUnauthenticated
+	}
+	u, err := s.store.GetUser(ctx, id)
+	if errors.Is(err, chat.ErrUserNotFound) {
+		return nil, ErrUnauthenticated
+	}
+	return u, err
+}
+
+// SessionTTL is how long a login lasts (the HTTP API uses it for the
+// cookie's lifetime).
+func (s *Service) SessionTTL() time.Duration {
+	return s.sessions.TTL()
 }
 
 // GetUser looks a user up by ID.

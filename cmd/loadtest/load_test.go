@@ -7,11 +7,11 @@ import (
 	"testing"
 	"time"
 
+	"golang.org/x/crypto/bcrypt"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/test/bufconn"
 
-	"chatserver/internal/chat"
 	"chatserver/internal/grpcapi"
 	"chatserver/internal/hub"
 	"chatserver/internal/pb"
@@ -21,15 +21,15 @@ import (
 )
 
 // startServer runs the real gRPC server in memory (bufconn, as in grpcapi's
-// tests) and returns a client for it, plus the store for setting up.
-func startServer(t *testing.T) (pb.ChatServiceClient, *store.MemoryStore) {
+// tests) and returns a client for it, plus the service for setting up.
+func startServer(t *testing.T) (pb.ChatServiceClient, *service.Service) {
 	t.Helper()
 	s := store.NewMemoryStore()
 	h := hub.NewHub(64)
 	hubCtx, stopHub := context.WithCancel(context.Background())
 	go h.Run(hubCtx)
 
-	svc := service.New(s).WithHub(h, h.Publish)
+	svc := service.New(s).WithHub(h, h.Publish).WithPasswordCost(bcrypt.MinCost)
 	gs := grpc.NewServer(grpc.UnaryInterceptor(grpcapi.UnaryAuth(svc, ratelimit.Limits{})), grpc.StreamInterceptor(grpcapi.StreamAuth(svc, ratelimit.Limits{})))
 	pb.RegisterChatServiceServer(gs, grpcapi.New(svc))
 	lis := bufconn.Listen(1 << 20)
@@ -46,33 +46,38 @@ func startServer(t *testing.T) (pb.ChatServiceClient, *store.MemoryStore) {
 		gs.Stop()
 		stopHub()
 	})
-	return pb.NewChatServiceClient(conn), s
+	return pb.NewChatServiceClient(conn), svc
 }
 
-func users(t *testing.T, s *store.MemoryStore, prefix string, n int) []string {
+// users signs up n users and returns their session tokens.
+func users(t *testing.T, svc *service.Service, prefix string, n int) []string {
 	t.Helper()
-	var ids []string
+	var tokens []string
 	for i := range n {
-		u, err := s.CreateUser(t.Context(), prefix+string(rune('a'+i)))
+		_, token, err := svc.Register(t.Context(), prefix+string(rune('a'+i)), "load-test-password")
 		if err != nil {
 			t.Fatal(err)
 		}
-		ids = append(ids, string(u.ID))
+		tokens = append(tokens, token)
 	}
-	return ids
+	return tokens
 }
 
 // A short, gentle load where nothing should be lost.
 func TestRun(t *testing.T) {
-	client, s := startServer(t)
-	posters := users(t, s, "poster", 2)
-	watchers := users(t, s, "watcher", 5)
-	room, err := s.CreateRoom(t.Context(), "loadroom", 1000)
+	client, svc := startServer(t)
+	posters := users(t, svc, "poster", 2)
+	watchers := users(t, svc, "watcher", 5)
+	room, err := svc.CreateRoom(t.Context(), "loadroom", 1000)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, p := range append(posters, watchers...) { // watching needs membership too
-		if err := room.Join(chat.UserID(p)); err != nil {
+	for _, token := range append(posters, watchers...) { // watching needs membership too
+		u, err := svc.Authenticate(t.Context(), token)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := svc.JoinRoom(t.Context(), u.ID, room.ID); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -117,8 +122,8 @@ func TestRun(t *testing.T) {
 }
 
 func TestRunReportsAWatcherThatCantStart(t *testing.T) {
-	client, s := startServer(t)
-	cfg := Config{Room: "r-404", Posters: users(t, s, "poster", 1), Watchers: users(t, s, "watcher", 2), Rate: 10, Duration: 100 * time.Millisecond}
+	client, svc := startServer(t)
+	cfg := Config{Room: "r-404", Posters: users(t, svc, "poster", 1), Watchers: users(t, svc, "watcher", 2), Rate: 10, Duration: 100 * time.Millisecond}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()

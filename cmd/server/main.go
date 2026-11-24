@@ -43,6 +43,7 @@ func main() {
 	requestsPerSecond := flag.Float64("requests-per-second", 20, "requests per logged-in user per second (0 = no limit)")
 	postsPerSecond := flag.Float64("posts-per-second", 20, "messages each user may post per second (0 = no limit)")
 	signUpsPerMinute := flag.Int("signups-per-minute", 10, "new accounts per IP per minute (0 = no limit)")
+	loginsPerMinute := flag.Int("logins-per-minute", 10, "login attempts per IP per minute (0 = no limit)")
 	flag.Parse()
 
 	// ctx is cancelled when you press Ctrl+C. Everything long-running watches it.
@@ -100,6 +101,7 @@ func main() {
 		PerUser: ratelimit.New(*requestsPerSecond, int(2**requestsPerSecond)),                            // requests per logged-in user
 		PerIP:   ratelimit.New(10, 30),                                                                   // requests without a login, per IP
 		SignUps: ratelimit.New(ratelimit.Per(*signUpsPerMinute, time.Minute), max(*signUpsPerMinute, 1)), // new accounts per IP
+		Logins:  ratelimit.New(ratelimit.Per(*loginsPerMinute, time.Minute), max(*loginsPerMinute, 1)),   // login attempts per IP
 	}
 	posts := ratelimit.New(*postsPerSecond, int(2**postsPerSecond)) // messages per user, over HTTP and gRPC alike
 

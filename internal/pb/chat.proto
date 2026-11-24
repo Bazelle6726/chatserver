@@ -76,7 +76,24 @@ message Message {
 
 message CreateUserRequest {
   string name = 1;
+  string password = 2; // 8-72 bytes; only a bcrypt hash of it is kept
 }
+
+message LoginRequest {
+  string name = 1;
+  string password = 2;
+}
+
+// What CreateUser and Login return: the user, and a session token to send
+// with every later call as "authorization: Bearer <token>" metadata.
+message AuthResponse {
+  User user = 1;
+  string token = 2;
+}
+
+message LogoutRequest {}
+
+message LogoutResponse {}
 
 message GetUserRequest {
   string id = 1;
@@ -132,20 +149,20 @@ message ConverseRequest {
 
 // -------------------------------------------------------------- service
 
-
-// The calls, exactly as the Go code and tests expect them:
-
-   service ChatService {
-     rpc CreateUser(CreateUserRequest) returns (User);
-     rpc GetUser(GetUserRequest) returns (User);
-     rpc CreateRoom(CreateRoomRequest) returns (Room);
-     rpc ListRooms(ListRoomsRequest) returns (ListRoomsResponse);
-     rpc JoinRoom(JoinRoomRequest) returns (JoinRoomResponse);
-     rpc PostMessage(PostMessageRequest) returns (Message);
-     rpc History(HistoryRequest) returns (HistoryResponse);
-     rpc Watch(WatchRequest) returns (stream Message); //(server streaming)
-     rpc Import(stream PostMessageRequest) returns (ImportSummary); //(client streaming)
-     rpc Converse(stream ConverseRequest) returns (stream Message); //(bidirectional)
-   }
+// CreateUser and Login need no session; every other call needs one.
+service ChatService {
+  rpc CreateUser(CreateUserRequest) returns (AuthResponse); // sign up, and log in
+  rpc Login(LoginRequest) returns (AuthResponse);
+  rpc Logout(LogoutRequest) returns (LogoutResponse); // ends this call's session
+  rpc GetUser(GetUserRequest) returns (User);
+  rpc CreateRoom(CreateRoomRequest) returns (Room);
+  rpc ListRooms(ListRoomsRequest) returns (ListRoomsResponse);
+  rpc JoinRoom(JoinRoomRequest) returns (JoinRoomResponse);
+  rpc PostMessage(PostMessageRequest) returns (Message);
+  rpc History(HistoryRequest) returns (HistoryResponse);
+  rpc Watch(WatchRequest) returns (stream Message);                  // server streaming
+  rpc Import(stream PostMessageRequest) returns (ImportSummary);     // client streaming
+  rpc Converse(stream ConverseRequest) returns (stream Message);     // bidirectional
+}
 //
 // "stream" before a type means "many of these, over time" on that side.

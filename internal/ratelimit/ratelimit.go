@@ -145,4 +145,5 @@ type Limits struct {
 	PerUser *Limiter // every request from a logged-in user, by user ID
 	PerIP   *Limiter // every request without a login (sign-up, sign-in, user lookup), by IP
 	SignUps *Limiter // creating accounts, by IP
+	Logins  *Limiter // login attempts, by IP: slows down password guessing
 }

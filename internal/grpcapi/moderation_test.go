@@ -16,7 +16,7 @@ import (
 // do, or gRPC clients could read what everyone else sees as "[removed]".
 func TestHistoryHidesBannedWords(t *testing.T) {
 	s := store.NewMemoryStore()
-	u, _ := s.CreateUser(t.Context(), "alice")
+	u, _ := s.CreateUser(t.Context(), "alice", nil)
 	r, _ := s.CreateRoom(t.Context(), "general", 10)
 	if err := r.Join(u.ID); err != nil {
 		t.Fatal(err)
@@ -28,7 +28,7 @@ func TestHistoryHidesBannedWords(t *testing.T) {
 	}
 
 	srv := New(service.New(s).WithModeration(moderation.New("scam").IsBanned))
-	ctx := withUser(context.Background(), u) // what the auth interceptor does
+	ctx := withUser(context.Background(), u, "") // what the auth interceptor does
 	resp, err := srv.History(ctx, &pb.HistoryRequest{RoomId: string(r.ID)})
 	if err != nil {
 		t.Fatal(err)

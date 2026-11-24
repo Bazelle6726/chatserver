@@ -1,13 +1,13 @@
 import { useCallback, useEffect, useState } from "react";
 import { api } from "../api.js";
 
-export default function RoomList({ me, current, refresh, onOpen, onError }) {
+export default function RoomList({ current, refresh, onOpen, onError }) {
   const [rooms, setRooms] = useState([]);
   const [newRoom, setNewRoom] = useState("");
 
   const load = useCallback(
-    () => api("GET", "/rooms", { userId: me.id }).then(setRooms).catch(onError),
-    [me.id, onError],
+    () => api("GET", "/rooms").then(setRooms).catch(onError),
+    [onError],
   );
 
   // Load now, and again after every join (member counts move).
@@ -17,7 +17,7 @@ export default function RoomList({ me, current, refresh, onOpen, onError }) {
 
   async function create() {
     try {
-      const room = await api("POST", "/rooms", { body: { name: newRoom.trim() }, userId: me.id });
+      const room = await api("POST", "/rooms", { body: { name: newRoom.trim() } });
       setNewRoom("");
       onOpen(room);
     } catch (e) {

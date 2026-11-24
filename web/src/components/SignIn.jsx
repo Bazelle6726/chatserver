@@ -1,16 +1,19 @@
 import { useState } from "react";
 import { api } from "../api.js";
 
+// Sign up or log in with a name and password. Either way the server sets the
+// session cookie, so all this component does with the reply is show who you
+// are.
 export default function SignIn({ me, onSignedIn, onSignOut, onError }) {
   const [name, setName] = useState("");
-  const [existing, setExisting] = useState("");
+  const [password, setPassword] = useState("");
 
   if (me) {
     return (
       <div>
         <h2>You</h2>
         <div id="me">
-          Signed in as <b>{me.name}</b> ({me.id})
+          Signed in as <b>{me.name}</b>
         </div>
         <button className="ghost" onClick={onSignOut} style={{ marginTop: 6 }}>
           Sign out
@@ -19,20 +22,36 @@ export default function SignIn({ me, onSignedIn, onSignOut, onError }) {
     );
   }
 
-  const create = () => api("POST", "/users", { body: { name: name.trim() } }).then(onSignedIn).catch(onError);
-  const useId = () => api("GET", `/users/${encodeURIComponent(existing.trim())}`).then(onSignedIn).catch(onError);
+  const send = (path) => (e) => {
+    e.preventDefault();
+    api("POST", path, { body: { name: name.trim(), password } })
+      .then((res) => {
+        setPassword("");
+        onSignedIn(res.user);
+      })
+      .catch(onError);
+  };
 
   return (
-    <div>
+    <form onSubmit={send("/sessions")}>
       <h2>You</h2>
-      <div className="row">
-        <input id="name" placeholder="new name, e.g. alice" maxLength={20} value={name} onChange={(e) => setName(e.target.value)} />
-        <button id="signup" onClick={create}>Create</button>
-      </div>
+      <input id="name" placeholder="name, e.g. alice" maxLength={20} autoComplete="username" value={name} onChange={(e) => setName(e.target.value)} />
+      <input
+        id="password"
+        type="password"
+        placeholder="password (8+ characters)"
+        maxLength={72}
+        autoComplete="current-password"
+        value={password}
+        onChange={(e) => setPassword(e.target.value)}
+        style={{ marginTop: 6 }}
+      />
       <div className="row" style={{ marginTop: 6 }}>
-        <input id="existing" placeholder="or your ID, e.g. u-1" value={existing} onChange={(e) => setExisting(e.target.value)} />
-        <button className="ghost" id="signin" onClick={useId}>Use</button>
+        <button id="signin">Log in</button>
+        <button type="button" className="ghost" id="signup" onClick={send("/users")}>
+          Create account
+        </button>
       </div>
-    </div>
+    </form>
   );
 }

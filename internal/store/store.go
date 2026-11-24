@@ -16,8 +16,11 @@ import (
 // query, so a request that times out or whose client goes away stops its
 // database work too.
 type Store interface {
-	CreateUser(ctx context.Context, name string) (*chat.User, error)
+	// Users. passwordHash is a bcrypt hash (see package auth), never a password.
+	CreateUser(ctx context.Context, name string, passwordHash []byte) (*chat.User, error)
 	GetUser(ctx context.Context, id chat.UserID) (*chat.User, error)
+	UserByName(ctx context.Context, name string) (*chat.User, error)
+	PasswordHash(ctx context.Context, id chat.UserID) ([]byte, error)
 
 	CreateRoom(ctx context.Context, name string, maxHistory int) (*chat.Room, error)
 	GetRoom(ctx context.Context, id chat.RoomID) (*chat.Room, error)

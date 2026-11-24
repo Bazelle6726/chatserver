@@ -53,7 +53,7 @@ func TestStoreConcurrentAccess(t *testing.T) {
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				u, err := s.CreateUser(t.Context(), fmt.Sprintf("user%d", i))
+				u, err := s.CreateUser(t.Context(), fmt.Sprintf("user%d", i), nil)
 				if err != nil {
 					t.Errorf("CreateUser: %v", err)
 					return
@@ -111,7 +111,7 @@ func TestDuplicateNamesUnderConcurrency(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			if _, err := s.CreateUser(t.Context(), "alice"); err == nil {
+			if _, err := s.CreateUser(t.Context(), "alice", nil); err == nil {
 				mu.Lock()
 				wins++
 				mu.Unlock()
@@ -138,13 +138,13 @@ func TestCancelledContext(t *testing.T) {
 	s := NewMemoryStore()
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	if _, err := s.CreateUser(ctx, "alice"); !errors.Is(err, context.Canceled) {
+	if _, err := s.CreateUser(ctx, "alice", nil); !errors.Is(err, context.Canceled) {
 		t.Errorf("CreateUser with a cancelled context = %v, want context.Canceled", err)
 	}
 	if _, err := s.ListRooms(ctx); !errors.Is(err, context.Canceled) {
 		t.Errorf("ListRooms with a cancelled context = %v, want context.Canceled", err)
 	}
-	if _, err := s.GetUser(t.Context(), "u-1"); !errors.Is(err, chat.ErrUserNotFound) {
+	if _, err := s.UserByName(t.Context(), "alice"); !errors.Is(err, chat.ErrUserNotFound) {
 		t.Errorf("CreateUser with a cancelled context must not have stored the user: %v", err)
 	}
 }

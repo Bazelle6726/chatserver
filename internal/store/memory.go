@@ -23,6 +23,7 @@ type MemoryStore struct {
 	users      map[chat.UserID]*chat.User
 	rooms      map[chat.RoomID]*chat.Room
 	userNames  map[string]chat.UserID
+	passwords  map[chat.UserID][]byte // bcrypt hashes, kept apart from chat.User so they never reach an API response
 	roomNames  map[string]chat.RoomID
 	nextUserID func() string
 	nextRoomID func() string
@@ -49,8 +50,9 @@ func NewMemoryStore(opts ...Option) *MemoryStore {
 		users:      make(map[chat.UserID]*chat.User),
 		rooms:      make(map[chat.RoomID]*chat.Room),
 		userNames:  make(map[string]chat.UserID),
+		passwords:  make(map[chat.UserID][]byte),
 		roomNames:  make(map[string]chat.RoomID),
-		nextUserID: NewIDGenerator("u"),
+		nextUserID: NewRandomIDGenerator("u"),
 		nextRoomID: NewIDGenerator("r"),
 		nextMsgID:  NewIDGenerator("m"),
 		now:        time.Now,
@@ -68,8 +70,9 @@ func NewMemoryStore(opts ...Option) *MemoryStore {
 //   - validates the name with chat.ValidateName and returns its error as-is
 //   - returns an error wrapping chat.ErrAlreadyExists if another user already
 //     has this name, or one that looks the same (see the userNames index)
-//   - otherwise creates the user with an ID from nextUserID, stores it, returns it
-func (s *MemoryStore) CreateUser(ctx context.Context, name string) (*chat.User, error) {
+//   - otherwise creates the user with an ID from nextUserID, stores it with
+//     its password hash, and returns it
+func (s *MemoryStore) CreateUser(ctx context.Context, name string, passwordHash []byte) (*chat.User, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -89,7 +92,35 @@ func (s *MemoryStore) CreateUser(ctx context.Context, name string) (*chat.User, 
 	}
 	s.users[user.ID] = user
 	s.userNames[key] = user.ID
+	s.passwords[user.ID] = passwordHash
 	return user, nil
+}
+
+// UserByName finds a user by name. Names are matched by their skeleton, the
+// same way uniqueness is checked, so "Alice" finds "alice".
+func (s *MemoryStore) UserByName(ctx context.Context, name string) (*chat.User, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if id, ok := s.userNames[textnorm.Skeleton(name)]; ok {
+		return s.users[id], nil
+	}
+	return nil, fmt.Errorf("user %q: %w", name, chat.ErrUserNotFound)
+}
+
+// PasswordHash returns the user's bcrypt password hash.
+func (s *MemoryStore) PasswordHash(ctx context.Context, id chat.UserID) ([]byte, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if hash, ok := s.passwords[id]; ok {
+		return hash, nil
+	}
+	return nil, fmt.Errorf("user %q: %w", id, chat.ErrUserNotFound)
 }
 
 // Returns the user, or an error wrapping chat.ErrUserNotFound.

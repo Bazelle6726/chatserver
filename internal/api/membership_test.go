@@ -6,15 +6,13 @@ import (
 
 	"chatserver/internal/hub"
 	"chatserver/internal/ratelimit"
-	"chatserver/internal/service"
-	"chatserver/internal/store"
 )
 
 // Reading a room, its history or its live feed, needs membership, the same
 // as posting to it.
 func TestReadingNeedsMembership(t *testing.T) {
 	h := hub.NewHub(4) // never run: the stream must be refused before it's used
-	s := &testServer{t: t, router: New(service.New(store.NewMemoryStore()).WithHub(h, nil), ratelimit.Limits{}).Router()}
+	s := &testServer{t: t, router: New(newSvc().WithHub(h, nil), ratelimit.Limits{}).Router()}
 	alice := s.mustUser("alice")
 	eve := s.mustUser("eve")
 	room := s.mustRoom(alice, "general")
