@@ -11,6 +11,7 @@ A multi-room chat server written in Go. Messages are pushed live to everyone wat
 - **REST API** with [Gin](https://github.com/gin-gonic/gin), speaking **JSON or protobuf** depending on the request headers
 - **gRPC API** using all four kinds of call: unary, server streaming, client streaming and bidirectional
 - **Live feed** over Server-Sent Events or gRPC streams
+- **In-game chat for Unity**: a WebSocket endpoint, a game API so a game's backend can sign players in and make private match rooms, and a [Unity package](unity/com.chatserver.chat/README.md) with a ready-made chat box
 - **Accounts** with bcrypt-hashed passwords and random session tokens: an HttpOnly cookie in the browser, a Bearer token for everything else
 - **Rate limits** per user, per IP and per posted message, the same over HTTP and gRPC
 - **Moderation**: worker goroutines replace messages containing [banned words](banned_words.txt) with `[removed]`, and admins can change the list while the server runs
@@ -87,6 +88,7 @@ Every setting is a flag, with a `CHAT_*` environment variable as a fallback; a f
 | `-log-format` | `CHAT_LOG_FORMAT` | `text` | `text`, or `json` for a log collector |
 | `-log-level` | `CHAT_LOG_LEVEL` | `info` | `debug`, `info`, `warn` or `error` |
 | – | `CHAT_ADMIN_TOKEN` | – | turns the admin API on; at least 16 characters. Environment only, since flags are visible to every user on the machine |
+| – | `CHAT_GAME_KEY` | – | turns the [game API](docs/API.md#game-api) on, for a game backend to sign players in; at least 16 characters. Environment only |
 
 Logs are structured with `log/slog`: one line per HTTP request or gRPC call, with the route (never the query string), status, time taken, IP and user ID.
 
@@ -124,6 +126,7 @@ chatserver/
 │   ├── protohttp/     a demo of protobuf over plain HTTP
 │   └── loadtest/      the load tester
 ├── web/               the React app; dist/ is the built app, embedded by embed.go
+├── unity/             the Unity package: in-game chat client and chat box
 └── internal/
     ├── chat/          the domain: users, rooms, messages, validation, errors
     ├── store/         the Store interface and in-memory implementation
@@ -142,6 +145,7 @@ chatserver/
 
 ## Documentation
 
-- [API reference](docs/API.md): HTTP, live feed, admin, gRPC and protobuf over HTTP
+- [API reference](docs/API.md): HTTP, live feed, WebSocket, game API, admin, gRPC and protobuf over HTTP
+- [Unity package](unity/com.chatserver.chat/README.md): adding in-game chat to a Unity game
 - [Performance](docs/PERFORMANCE.md): benchmarks, load testing and profiling
 - [Development](docs/DEVELOPMENT.md): testing, regenerating the protobuf code, and changing the React app

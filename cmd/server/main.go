@@ -139,7 +139,7 @@ func run(cfg config.Config, logger *slog.Logger) error {
 	// HTTP. Listen first, so a port that's taken is reported straight away.
 	gin.SetMode(gin.ReleaseMode) // no debug banner; requests are logged by api.RequestLog
 	a := api.New(svc, limits).WithModeration(words, cfg.BannedWordsPath, cfg.AdminToken).WithGame(cfg.GameKey).WithWeb(app)
-	httpLis, err := net.Listen("tcp", cfg.HTTPAddr)
+	httpListeners, err := listen(cfg.HTTPAddr)
 	if err != nil {
 		return err
 	}
@@ -154,16 +154,18 @@ func run(cfg config.Config, logger *slog.Logger) error {
 		// meant to stay open. Body size is capped by api.LimitBody instead.
 		ErrorLog: slog.NewLogLogger(logger.Handler(), slog.LevelWarn),
 	}
-	go func() {
-		logger.Info("HTTP listening", "url", "http://"+httpLis.Addr().String())
-		if err := srv.Serve(httpLis); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			logger.Error("HTTP server stopped", "err", err)
-			stop() // shut the rest down too
-		}
-	}()
+	for _, l := range httpListeners {
+		go func() {
+			logger.Info("HTTP listening", "url", "http://"+l.Addr().String())
+			if err := srv.Serve(l); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				logger.Error("HTTP server stopped", "err", err)
+				stop() // shut the rest down too
+			}
+		}()
+	}
 
 	// gRPC: the same service behind a second front door.
-	grpcLis, err := net.Listen("tcp", cfg.GRPCAddr)
+	grpcListeners, err := listen(cfg.GRPCAddr)
 	if err != nil {
 		return err
 	}
@@ -180,13 +182,15 @@ func run(cfg config.Config, logger *slog.Logger) error {
 	)
 	pb.RegisterChatServiceServer(gs, grpcapi.New(svc))
 	reflection.Register(gs) // lets tools like grpcurl list the service without the .proto
-	go func() {
-		logger.Info("gRPC listening", "addr", grpcLis.Addr().String())
-		if err := gs.Serve(grpcLis); err != nil {
-			logger.Error("gRPC server stopped", "err", err)
-			stop()
-		}
-	}()
+	for _, l := range grpcListeners {
+		go func() {
+			logger.Info("gRPC listening", "addr", l.Addr().String())
+			if err := gs.Serve(l); err != nil {
+				logger.Error("gRPC server stopped", "err", err)
+				stop()
+			}
+		}()
+	}
 
 	<-ctx.Done() // wait for Ctrl+C
 	logger.Info("shutting down")
@@ -224,4 +228,31 @@ func run(cfg config.Config, logger *slog.Logger) error {
 
 	logger.Info("bye", "dropped_slow_clients", h.Dropped())
 	return nil
+}
+
+// listen opens addr for the servers. "localhost" means both loopback
+// addresses, IPv4 (127.0.0.1) and IPv6 (::1): a client may resolve
+// localhost to either, and some (Go's, .NET's) try only the one they get.
+// Machines without IPv6 just get the IPv4 one.
+func listen(addr string) ([]net.Listener, error) {
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return nil, err
+	}
+	if host != "localhost" {
+		l, err := net.Listen("tcp", addr)
+		if err != nil {
+			return nil, err
+		}
+		return []net.Listener{l}, nil
+	}
+	v4, err := net.Listen("tcp", net.JoinHostPort("127.0.0.1", port))
+	if err != nil {
+		return nil, err
+	}
+	v6, err := net.Listen("tcp", net.JoinHostPort("::1", port))
+	if err != nil {
+		return []net.Listener{v4}, nil // no IPv6 here: IPv4 alone is fine
+	}
+	return []net.Listener{v4, v6}, nil
 }

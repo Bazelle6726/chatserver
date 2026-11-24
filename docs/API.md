@@ -3,6 +3,8 @@
 - [A quick tour with curl](#a-quick-tour-with-curl)
 - [HTTP API](#http-api)
 - [Live feed (SSE)](#live-feed-sse)
+- [WebSocket](#websocket)
+- [Game API](#game-api)
 - [Moderation and the admin API](#moderation-and-the-admin-api)
 - [gRPC API](#grpc-api)
 - [Protobuf over HTTP](#protobuf-over-http)
@@ -95,6 +97,9 @@ The admin routes use their own token instead (see [below](#moderation-and-the-ad
 | `POST` | `/rooms/:id/messages` | user | `{"text": "hello"}` | `201` message |
 | `GET` | `/rooms/:id/messages?limit=50` | member | – | `200` list of messages, oldest first |
 | `GET` | `/rooms/:id/stream` | member | – | `200` event stream |
+| `GET` | `/ws` | token in the first frame | – | a [WebSocket](#websocket) |
+| `POST` | `/game/sessions` | game | `{"player_id": "...", "name": "Ace"}` | `200` `{"user": user, "token": "..."}` (see [Game API](#game-api)) |
+| `POST` | `/game/rooms` | game | `{"name": "match-1", "players": ["..."]}` | `200` room |
 | `GET` | `/admin/banned-words` | admin | – | `200` `{"words": [...]}` |
 | `POST` | `/admin/banned-words` | admin | `{"word": "spam"}` | `201` `{"word": "spam"}` |
 | `DELETE` | `/admin/banned-words/:word` | admin | – | `204` |
@@ -106,6 +111,7 @@ The admin routes use their own token instead (see [below](#moderation-and-the-ad
   - A name can't mix Latin, Cyrillic and Greek letters, so `pаypal` with a Cyrillic `а` is refused.
   - Uniqueness ignores case and look-alike letters: once `alice` exists, `Alice`, `ＡＬＩＣＥ` (fullwidth) and an all-Cyrillic look-alike are taken too.
 - **Membership**: you must join a room (`POST /rooms/:id/members`) before you can post to it, read its history or watch its stream.
+- **Private rooms** (match rooms, made through the [Game API](#game-api)) can't be joined: only players the game adds are in them, and nobody else sees them in `GET /rooms`. Joining one gets `403`.
 - **Messages**: not blank, at most 500 characters.
 - **Body size**: at most 64 KiB, then `413`.
 - **`max_history`**: 1 to 1000; omitted or 0 means 100.
@@ -125,11 +131,11 @@ The admin routes use their own token instead (see [below](#moderation-and-the-ad
 {"id": "u-3f9c2a1b7e4d5c60", "name": "alice", "role": "member"}
 
 // room
-{"id": "r-1", "name": "general", "members": 3}
+{"id": "r-1", "name": "general", "members": 3, "private": false}
 
 // message
-{"id": "m-7", "room": "r-1", "author": "u-3f9c2a1b7e4d5c60", "kind": "text",
- "text": "hello", "created_at": "2026-11-09T14:02:11.123Z"}
+{"id": "m-7", "room": "r-1", "author": "u-3f9c2a1b7e4d5c60", "author_name": "alice",
+ "kind": "text", "text": "hello", "created_at": "2026-11-09T14:02:11.123Z"}
 ```
 
 ### Errors
@@ -144,11 +150,11 @@ Errors are always JSON. Validation errors also name the field:
 |---|---|
 | `400` | invalid body, name, text, limit or word |
 | `401` | no session, or one that's unknown, logged out or expired; a wrong name or password; or a missing or wrong admin token |
-| `403` | posting to, reading or watching a room you haven't joined |
-| `404` | unknown user, room or path, or the admin API is off |
+| `403` | posting to, reading or watching a room you haven't joined, or joining a private room |
+| `404` | unknown user, player, room or path, or the admin or game API is off |
 | `409` | name already taken (or one that looks the same), or already a member |
 | `413` | request body over 64 KiB |
-| `429` | a rate limit exceeded, or too many wrong admin tokens |
+| `429` | a rate limit exceeded, or too many wrong admin tokens or game keys |
 | `500` | anything unexpected; the body is just `{"error": "internal error"}` and the details go to the server log |
 
 ## Live feed (SSE)
@@ -172,6 +178,64 @@ es.addEventListener("message", e => console.log(JSON.parse(e.data)));
 ```
 
 Each watcher has a fixed-size buffer. A watcher that falls too far behind has its stream closed rather than slowing the room down; it can reconnect and catch up from the history.
+
+## WebSocket
+
+`GET /ws` carries a whole chat session over one connection: log in, join rooms, send and receive. It's what game clients use (see the [Unity package](../unity/com.chatserver.chat/README.md)), because it works on every platform, browsers and Unity WebGL included.
+
+Every frame, both ways, is one JSON object with a `type`. A field means the same thing in every frame, so a client can parse them all with one class. Any request may carry a `ref`, which the server copies onto its reply or error.
+
+**Client to server:**
+
+| Frame | Does |
+|---|---|
+| `{"type":"auth","token":"..."}` | logs in; must be the first frame, within 10 seconds |
+| `{"type":"join","room_name":"lobby"}` | joins a room by name: a public room is created if missing; a private one only if the game added you |
+| `{"type":"join","room_id":"r-3","limit":20}` | joins by ID; `limit` = history sent back (default 50) |
+| `{"type":"send","room_id":"r-3","text":"gg"}` | posts a message |
+| `{"type":"leave","room_id":"r-3"}` | stops receiving the room (you stay a member) |
+| `{"type":"ping"}` | answered with `pong` |
+
+**Server to client:**
+
+| Frame | Means |
+|---|---|
+| `{"type":"ready","user":{...}}` | logged in |
+| `{"type":"joined","room_id":"r-3","room":{...},"history":[...]}` | joined; `history` is oldest first |
+| `{"type":"message","room_id":"r-3","message":{...}}` | a new message in a joined room, your own included |
+| `{"type":"sent","ref":"..","message":{...}}` | your message was stored |
+| `{"type":"left","room_id":"r-3","reason":".."}` | you left, or were dropped for reading too slowly (join again to catch up) |
+| `{"type":"error","ref":"..","code":"forbidden","error":".."}` | a request was refused; the connection stays open |
+| `{"type":"pong"}` | |
+
+Error codes: `invalid`, `unauthenticated`, `forbidden`, `not_found`, `conflict`, `rate_limited`, `too_large`, `unavailable`, `internal`.
+
+- **Logging in**: the token travels in the first frame, not the URL (which ends up in logs) or a header (which browsers can't set on a WebSocket). A bad token closes the connection with status 1008 and a reason starting `login failed`.
+- **Limits**: 20 rooms per connection, 16 KiB per frame, and the usual per-user request and message rates.
+- **Shutdown**: when the server stops, it closes every WebSocket with status 1001 (going away). Clients should reconnect with backoff.
+- Live messages are moderated like everywhere else, and the history in `joined` shows banned messages as `[removed]`.
+
+## Game API
+
+A game's own **backend** (never the game client: the key must stay on your servers) signs its players in to chat and sets up their match rooms. It's off unless `CHAT_GAME_KEY` is set to at least 16 characters, and every request carries that key:
+
+```bash
+KEY=a-long-random-secret-for-your-backend
+
+# A player logs in to your game: get them a chat token, and give it to their client.
+curl -X POST localhost:8080/game/sessions -H "X-Game-Key: $KEY" -H "Content-Type: application/json" \
+     -d '{"player_id":"steam:76561198000000001","name":"Ace"}'
+# {"user":{"id":"u-9a37...","name":"Ace","role":"member"},"token":"Xq3..."}
+
+# A match starts: make its private room and add the players.
+curl -X POST localhost:8080/game/rooms -H "X-Game-Key: $KEY" -H "Content-Type: application/json" \
+     -d '{"name":"match-8841","players":["steam:76561198000000001","steam:76561198000000002"]}'
+# {"id":"r-4","name":"match-8841","members":2,"private":true}
+```
+
+- **`/game/sessions`**: the same `player_id` (up to 128 characters) always maps to the same chat user. A new player's chat name is their display name made valid: spaces become `_`, other symbols are dropped, it's cut to 20 characters, and a name that's taken gets a suffix (`Ace-3f9c`). Game players have no password, so this is the only way to sign them in. No cookie is set, since the caller is a server.
+- **`/game/rooms`**: finds or creates a **private** room and adds the players, who must each have signed in through `/game/sessions`. Call it again to add more players. `max_history` applies only when the room is created. A public room with the same name gets `409`.
+- Not limited per IP, since one backend signs in every player. Wrong keys are locked out like wrong admin tokens.
 
 ## Moderation and the admin API
 
