@@ -161,5 +161,10 @@ func (h *Hub) Publish(m chat.Message) {
 	}
 }
 
+// Done is closed once the hub has stopped (the server is shutting down).
+// Long-lived connections that the HTTP server can't close by itself, like
+// WebSockets, watch it to know when to hang up.
+func (h *Hub) Done() <-chan struct{} { return h.done }
+
 // Dropped reports how many slow clients have been disconnected.
 func (h *Hub) Dropped() int64 { return h.dropped.Load() }

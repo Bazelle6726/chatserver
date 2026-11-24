@@ -28,6 +28,8 @@ func (a *API) Router() *gin.Engine {
 	public := r.Group("/", LimitByIP(a.limits.PerIP))
 	public.POST("/users", LimitByIP(a.limits.SignUps), a.createUser)
 	public.POST("/sessions", LimitByIP(a.limits.Logins), a.login)
+	// The WebSocket logs in with its first frame, so it's public here.
+	public.GET("/ws", a.websocket)
 
 	// Logged in: limited per user. RateLimit must come after Auth, which
 	// says who the user is.

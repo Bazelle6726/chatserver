@@ -273,6 +273,11 @@ func (s *Service) JoinRoom(ctx context.Context, user chat.UserID, roomID chat.Ro
 	return joinPublic(room, user)
 }
 
+// Room looks a room up by ID.
+func (s *Service) Room(ctx context.Context, id chat.RoomID) (*chat.Room, error) {
+	return s.store.GetRoom(ctx, id)
+}
+
 // joinPublic joins user to room, refusing private rooms they're not in.
 func joinPublic(room *chat.Room, user chat.UserID) error {
 	if room.Private && !room.IsMember(user) {
@@ -416,6 +421,15 @@ func (s *Service) Watch(ctx context.Context, user chat.UserID, roomID chat.RoomI
 	}
 	client = s.hub.Join(user, room.ID)
 	return client, func() { s.hub.Leave(client) }, nil
+}
+
+// LiveDone is closed when live delivery stops because the server is shutting
+// down. It's nil (never closed) when there's no live delivery.
+func (s *Service) LiveDone() <-chan struct{} {
+	if s.hub == nil {
+		return nil
+	}
+	return s.hub.Done()
 }
 
 // JoinAndWatch is Watch for a user who may not have joined yet: it joins
