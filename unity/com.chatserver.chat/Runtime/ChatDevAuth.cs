@@ -64,7 +64,18 @@ namespace ChatServer.Chat
                 req.uploadHandler = new UploadHandlerRaw(body);
                 req.downloadHandler = new DownloadHandlerBuffer();
                 req.SetRequestHeader("Content-Type", "application/json");
-                var op = req.SendWebRequest();
+                UnityWebRequestAsyncOperation op;
+                try
+                {
+                    op = req.SendWebRequest();
+                }
+                catch (InvalidOperationException e) when (url.StartsWith("http:", StringComparison.OrdinalIgnoreCase))
+                {
+                    // Unity 2022.1+ refuses plain http:// unless the project allows it.
+                    throw new Exception("Unity blocked the http:// request (" + e.Message + "). For local testing, set " +
+                        "Project Settings > Player > Other Settings > Allow downloads over HTTP to " +
+                        "\"Allowed in development builds\"; in production, use https://.", e);
+                }
                 while (!op.isDone)
                     await Task.Yield();
                 var text = req.downloadHandler.text;

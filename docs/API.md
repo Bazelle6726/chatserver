@@ -210,7 +210,8 @@ Every frame, both ways, is one JSON object with a `type`. A field means the same
 
 Error codes: `invalid`, `unauthenticated`, `forbidden`, `not_found`, `conflict`, `rate_limited`, `too_large`, `unavailable`, `internal`.
 
-- **Logging in**: the token travels in the first frame, not the URL (which ends up in logs) or a header (which browsers can't set on a WebSocket). A bad token closes the connection with status 1008 and a reason starting `login failed`.
+- **Logging in**: the token travels in the first frame, not the URL (which ends up in logs) or a header (which browsers can't set on a WebSocket). A failed login closes the connection with a reason starting `login failed`, and a code that says what to do: **4401** = the token was refused (unknown, expired, or no auth frame), so get a new one; **1013** = try again later (rate limited, or a server problem).
+- **Encoding**: frames are UTF-8 JSON, with `<`, `>` and `&` sent as they are, not escaped into 6-character codes the way Go escapes them by default.
 - **Limits**: 20 rooms per connection, 16 KiB per frame, and the usual per-user request and message rates.
 - **Shutdown**: when the server stops, it closes every WebSocket with status 1001 (going away). Clients should reconnect with backoff.
 - Live messages are moderated like everywhere else, and the history in `joined` shows banned messages as `[removed]`.

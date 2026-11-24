@@ -27,13 +27,17 @@ type wsEnv struct {
 	stopHub context.CancelFunc
 }
 
-func newWSEnv(t *testing.T) *wsEnv {
+func newWSEnv(t *testing.T, limits ...ratelimit.Limits) *wsEnv {
 	t.Helper()
 	h := hub.NewHub(16)
 	hubCtx, stopHub := context.WithCancel(context.Background())
 	go h.Run(hubCtx)
 	svc := newSvcOn(store.NewMemoryStore()).WithHub(h, h.Publish).WithModeration(moderation.New("scam").IsBanned)
-	srv := httptest.NewServer(New(svc, ratelimit.Limits{}).Router())
+	var l ratelimit.Limits
+	if len(limits) > 0 {
+		l = limits[0]
+	}
+	srv := httptest.NewServer(New(svc, l).Router())
 	t.Cleanup(func() {
 		stopHub()
 		srv.Close()
@@ -146,11 +150,11 @@ func TestWSLoginRequired(t *testing.T) {
 
 	c := e.dial()
 	c.send(wsFrame{Type: "join", RoomName: "lobby"})
-	c.closed(websocket.StatusPolicyViolation, "a first frame that isn't auth")
+	c.closed(wsCloseBadLogin, "a first frame that isn't auth")
 
 	c = e.dial()
 	c.send(wsFrame{Type: "auth", Token: "made-up-token"})
-	c.closed(websocket.StatusPolicyViolation, "a made-up token")
+	c.closed(wsCloseBadLogin, "a made-up token")
 }
 
 func TestWSChat(t *testing.T) {
@@ -271,4 +275,40 @@ func TestWSShutdown(t *testing.T) {
 
 	e.stopHub()
 	c.closed(websocket.StatusGoingAway, "server shutting down")
+}
+
+// A rate-limited login is worth retrying later (1013), unlike a refused
+// token (4401): clients must be able to tell them apart.
+func TestWSLoginRateLimited(t *testing.T) {
+	e := newWSEnv(t, ratelimit.Limits{PerUser: ratelimit.New(0.001, 1)}) // one request, then nothing for ages
+	_, token := e.user("alice")
+	e.login(token) // uses the only request
+	c := e.dial()
+	c.send(wsFrame{Type: "auth", Token: token})
+	c.closed(websocket.StatusTryAgainLater, "a rate-limited login")
+}
+
+// Frames don't escape < > & into 6-byte codes: it's not HTML, and it would make
+// a frame of history up to 6 times bigger.
+func TestWSFramesAreNotHTMLEscaped(t *testing.T) {
+	e := newWSEnv(t)
+	_, token := e.user("alice")
+	c := e.login(token)
+	c.send(wsFrame{Type: "join", RoomName: "lobby"})
+	room := c.nextOf("joined").RoomID
+	c.send(wsFrame{Type: "send", RoomID: room, Text: "a <b> & c"})
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	for {
+		_, data, err := c.conn.Read(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(data), `"type":"sent"`) {
+			if !strings.Contains(string(data), "a <b> & c") {
+				t.Errorf("frame %s escapes the text, want it as typed", data)
+			}
+			return
+		}
+	}
 }

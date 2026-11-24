@@ -6,6 +6,7 @@
 // Controls (rebindable below):
 //   Enter or T   open the box and type     Enter   send
 //   Esc          close without sending     Tab     next room, while typing
+// On mobile, tap the box's area after Open(), and the keyboard's Done sends.
 //
 // While the box is open, IsTyping is true and TypingChanged fires: stop
 // your game reading movement keys then, or players walk while they type.
@@ -13,6 +14,7 @@ using System;
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.EventSystems;
+using UnityEngine.SceneManagement;
 using UnityEngine.UI;
 
 namespace ChatServer.Chat
@@ -36,7 +38,7 @@ namespace ChatServer.Chat
         public float fadeAfter = 10f;
         public int maxLines = 100;
 
-        [Header("Keys (old Input Manager)")]
+        [Header("Keys")]
         public KeyCode openKey = KeyCode.T;
         public KeyCode sendKey = KeyCode.Return;
         public KeyCode closeKey = KeyCode.Escape;
@@ -59,11 +61,16 @@ namespace ChatServer.Chat
         }
 
         ChatClient _chat;
+        GameObject _canvasRoot; // a root object of its own, so a parent Canvas can't restyle it
         CanvasGroup _background;
+        CanvasGroup _inputGroup;
         RectTransform _content;
         ScrollRect _scroll;
         InputField _input;
         Text _placeholder;
+        bool _scrollToBottom;
+        int _openedFrame = -1;
+        int _closedFrame = -1;
         readonly List<Line> _lines = new List<Line>();
         readonly HashSet<string> _seen = new HashSet<string>();     // message IDs already shown
         readonly Queue<string> _seenOrder = new Queue<string>();     // to forget old IDs
@@ -85,6 +92,8 @@ namespace ChatServer.Chat
 
         void OnEnable()
         {
+            if (_canvasRoot != null)
+                _canvasRoot.SetActive(true);
             _chat.Joined += OnJoined;
             _chat.MessageReceived += OnMessage;
             _chat.Left += OnLeft;
@@ -102,6 +111,14 @@ namespace ChatServer.Chat
             _chat.Disconnected -= OnDisconnected;
             _chat.AuthFailed -= OnAuthFailed;
             SetTyping(false);
+            if (_canvasRoot != null)
+                _canvasRoot.SetActive(false);
+        }
+
+        void OnDestroy()
+        {
+            if (_canvasRoot != null)
+                Destroy(_canvasRoot);
         }
 
         // ---- events from the client ----
@@ -112,8 +129,9 @@ namespace ChatServer.Chat
                 _roomOrder.Add(room.id);
             if (string.IsNullOrEmpty(ActiveRoomId))
                 ActiveRoomId = room.id;
-            foreach (var m in history)
-                AddMessage(m);
+            // Only what can be shown: older lines would be removed straight away.
+            for (var i = Mathf.Max(0, history.Length - maxLines); i < history.Length; i++)
+                AddMessage(history[i]);
             UpdatePlaceholder();
         }
 
@@ -121,9 +139,17 @@ namespace ChatServer.Chat
 
         void OnLeft(string roomId, string reason)
         {
+            // Dropped for reading too slowly: ChatClient is rejoining it, so it
+            // stays listed, and stays the room you're typing into.
+            if (reason != null && reason.StartsWith("dropped", StringComparison.Ordinal))
+                return;
             _roomOrder.Remove(roomId);
             if (ActiveRoomId == roomId)
+            {
                 ActiveRoomId = _roomOrder.Count > 0 ? _roomOrder[0] : null;
+                if (ActiveRoomId != null && _chat.Rooms.TryGetValue(ActiveRoomId, out var now))
+                    AddSystem($"Now chatting in {now.name}.");
+            }
             UpdatePlaceholder();
         }
 
@@ -157,24 +183,44 @@ namespace ChatServer.Chat
         {
             if (!IsTyping)
             {
-                if (KeyDown(openKey) || KeyDown(sendKey))
+                // Not the frame the box closed (the Enter that sent must not
+                // reopen it), and not while the game's own text field has focus.
+                if (Time.frameCount != _closedFrame && (KeyDown(openKey) || SendPressed()) && !OtherFieldFocused())
                     Open();
             }
             else
             {
                 if (KeyDown(closeKey))
                     Close();
-                else if (KeyDown(sendKey))
+                else if (SendPressed())
                     Submit();
                 else if (KeyDown(nextRoomKey))
                     NextRoom();
+                else if (Time.frameCount > _openedFrame + 2 && !_input.isFocused)
+                    Close(); // focus went elsewhere (a click on the game): stop typing
             }
             Fade();
+        }
+
+        void LateUpdate()
+        {
+            if (_scrollToBottom)
+            {
+                // Once per frame, however many lines arrived.
+                _scrollToBottom = false;
+                Canvas.ForceUpdateCanvases();
+                _scroll.verticalNormalizedPosition = 0;
+            }
+            FollowScene();
         }
 
         /// <summary>Opens the box for typing.</summary>
         public void Open()
         {
+            if (IsTyping)
+                return;
+            EnsureEventSystem(); // it may have gone with a scene change
+            _openedFrame = Time.frameCount;
             SetTyping(true);
             _input.text = "";
             _input.ActivateInputField();
@@ -184,10 +230,13 @@ namespace ChatServer.Chat
         /// <summary>Closes the box without sending.</summary>
         public void Close()
         {
+            if (!IsTyping)
+                return;
+            _closedFrame = Time.frameCount;
+            SetTyping(false); // first, so the onEndEdit this causes is ignored
             _input.DeactivateInputField();
-            if (EventSystem.current != null)
+            if (EventSystem.current != null && EventSystem.current.currentSelectedGameObject == _input.gameObject)
                 EventSystem.current.SetSelectedGameObject(null);
-            SetTyping(false);
         }
 
         void Submit()
@@ -201,6 +250,18 @@ namespace ChatServer.Chat
                     _chat.Send(ActiveRoomId, text);
             }
             Close();
+        }
+
+        // Editing ended: Enter, a mobile keyboard's Done, Esc, or focus lost.
+        void OnEndEdit(string _)
+        {
+            if (!IsTyping)
+                return; // we closed it ourselves
+            var keyboard = _input.touchScreenKeyboard;
+            if (SendPressed() || (keyboard != null && keyboard.status == TouchScreenKeyboard.Status.Done))
+                Submit();
+            else
+                Close();
         }
 
         void NextRoom()
@@ -218,7 +279,39 @@ namespace ChatServer.Chat
             if (IsTyping == typing)
                 return;
             IsTyping = typing;
-            TypingChanged?.Invoke(typing);
+            if (_inputGroup != null)
+            {
+                _inputGroup.alpha = typing ? 1 : 0;
+                _inputGroup.blocksRaycasts = typing;
+            }
+            try
+            {
+                TypingChanged?.Invoke(typing);
+            }
+            catch (Exception e)
+            {
+                Debug.LogException(e);
+            }
+        }
+
+        bool SendPressed() =>
+            KeyDown(sendKey) || (sendKey == KeyCode.Return && KeyDown(KeyCode.KeypadEnter));
+
+        // Whether one of the game's own text fields (uGUI or TextMeshPro) has
+        // the focus, so T typed there doesn't open the chat.
+        bool OtherFieldFocused()
+        {
+            var es = EventSystem.current;
+            var selected = es != null ? es.currentSelectedGameObject : null;
+            if (selected == null || selected == _input.gameObject)
+                return false;
+            var field = selected.GetComponent<InputField>();
+            if (field != null && field.isFocused)
+                return true;
+            foreach (var c in selected.GetComponents<MonoBehaviour>())
+                if (c != null && c.GetType().Name == "TMP_InputField")
+                    return true; // by name, so this package needn't depend on TextMeshPro
+            return false;
         }
 
         static bool KeyDown(KeyCode key)
@@ -252,8 +345,10 @@ namespace ChatServer.Chat
         void AddSystem(string text) =>
             AddLine($"<i><color=#{ColorUtility.ToHtmlStringRGB(systemColor)}>{Escape(text)}</color></i>");
 
-        // Stops chat text from being read as rich-text tags ("<b>", "<size=200>").
-        static string Escape(string s) => string.IsNullOrEmpty(s) ? "" : s.Replace("<", "<​");
+        // Stops chat text from being read as rich-text tags ("<b>", "<size=200>"):
+        // "<" is shown as the similar-looking "‹" (U+2039), which every common
+        // font has, so it can never start a tag.
+        static string Escape(string s) => string.IsNullOrEmpty(s) ? "" : s.Replace('<', '‹');
 
         void AddLine(string richText)
         {
@@ -278,8 +373,7 @@ namespace ChatServer.Chat
                 Destroy(_lines[0].go);
                 _lines.RemoveAt(0);
             }
-            Canvas.ForceUpdateCanvases();
-            _scroll.verticalNormalizedPosition = 0; // keep the newest in view
+            _scrollToBottom = true; // done once in LateUpdate
         }
 
         void Fade()
@@ -307,27 +401,41 @@ namespace ChatServer.Chat
                 : "Say something...";
         }
 
+        // The chat canvas is a root object, so it follows this object by hand:
+        // into DontDestroyOnLoad if this object goes there, else into its scene.
+        void FollowScene()
+        {
+            if (_canvasRoot == null || _canvasRoot.scene == gameObject.scene)
+                return;
+            if (gameObject.scene.name == "DontDestroyOnLoad")
+                DontDestroyOnLoad(_canvasRoot);
+            else if (gameObject.scene.IsValid() && gameObject.scene.isLoaded)
+                SceneManager.MoveGameObjectToScene(_canvasRoot, gameObject.scene);
+        }
+
         // ---- building the UI ----
 
         void BuildUI()
         {
             EnsureEventSystem();
 
-            var canvasGo = new GameObject("Chat Canvas", typeof(Canvas), typeof(CanvasScaler), typeof(GraphicRaycaster));
-            canvasGo.transform.SetParent(transform, false);
-            var canvas = canvasGo.GetComponent<Canvas>();
+            // A root object of its own: under a game's Canvas, a nested canvas
+            // would ignore its own scaler and anchor to the parent instead.
+            _canvasRoot = new GameObject("Chat Canvas", typeof(Canvas), typeof(CanvasScaler), typeof(GraphicRaycaster));
+            var canvas = _canvasRoot.GetComponent<Canvas>();
             canvas.renderMode = RenderMode.ScreenSpaceOverlay;
             canvas.sortingOrder = 100; // above the game's own UI
-            var scaler = canvasGo.GetComponent<CanvasScaler>();
+            var scaler = _canvasRoot.GetComponent<CanvasScaler>();
             scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
             scaler.referenceResolution = new Vector2(1920, 1080);
             scaler.matchWidthOrHeight = 0.5f;
 
-            // The panel: bottom-left, with a background that shows only while typing.
-            var panel = NewRect("Chat Panel", canvasGo.transform);
+            // The panel: bottom-left.
+            var panel = NewRect("Chat Panel", _canvasRoot.transform);
             panel.anchorMin = panel.anchorMax = panel.pivot = Vector2.zero;
             panel.anchoredPosition = offset;
             panel.sizeDelta = size;
+
             // The background is its own layer, so hiding it leaves the lines visible.
             var bgRect = NewRect("Background", panel);
             bgRect.anchorMin = Vector2.zero;
@@ -338,33 +446,28 @@ namespace ChatServer.Chat
             _background.alpha = 0;
             _background.blocksRaycasts = false;
 
-            // The input box along the bottom.
+            // The input box along the bottom, shown only while typing. It stays
+            // interactable (hidden by alpha and raycasts), so focusing it never
+            // waits on a CanvasGroup change.
             const float inputHeight = 34;
-            var inputRect = NewRect("Input", canvasGo.transform);
+            var inputRect = NewRect("Input", _canvasRoot.transform);
             inputRect.anchorMin = inputRect.anchorMax = inputRect.pivot = Vector2.zero;
             inputRect.anchoredPosition = offset - new Vector2(0, inputHeight + 4);
             inputRect.sizeDelta = new Vector2(size.x, inputHeight);
-            var inputBg = inputRect.gameObject.AddComponent<Image>();
-            inputBg.color = new Color(0, 0, 0, 0.7f);
+            inputRect.gameObject.AddComponent<Image>().color = new Color(0, 0, 0, 0.7f);
             _input = inputRect.gameObject.AddComponent<InputField>();
             _input.lineType = InputField.LineType.SingleLine;
             _input.characterLimit = 500; // the server's limit
-            var inputText = NewText("Text", inputRect, Color.white);
-            _input.textComponent = inputText;
+            _input.navigation = new Navigation { mode = Navigation.Mode.None }; // arrow keys never land here
+            _input.textComponent = NewText("Text", inputRect, Color.white);
             _placeholder = NewText("Placeholder", inputRect, new Color(1, 1, 1, 0.45f));
             _placeholder.fontStyle = FontStyle.Italic;
             _input.placeholder = _placeholder;
+            _input.onEndEdit.AddListener(OnEndEdit);
             UpdatePlaceholder();
-            var inputGroup = inputRect.gameObject.AddComponent<CanvasGroup>();
-            TypingChanged += typing =>
-            {
-                inputGroup.alpha = typing ? 1 : 0;
-                inputGroup.interactable = typing;
-                inputGroup.blocksRaycasts = typing;
-            };
-            inputGroup.alpha = 0;
-            inputGroup.interactable = false;
-            inputGroup.blocksRaycasts = false;
+            _inputGroup = inputRect.gameObject.AddComponent<CanvasGroup>();
+            _inputGroup.alpha = 0;
+            _inputGroup.blocksRaycasts = false;
 
             // The scrolling list of lines inside the panel.
             _scroll = panel.gameObject.AddComponent<ScrollRect>();
@@ -392,6 +495,8 @@ namespace ChatServer.Chat
             _content.gameObject.AddComponent<ContentSizeFitter>().verticalFit = ContentSizeFitter.FitMode.PreferredSize;
             _scroll.viewport = viewport;
             _scroll.content = _content;
+
+            FollowScene();
         }
 
         static RectTransform NewRect(string name, Transform parent)
@@ -418,8 +523,9 @@ namespace ChatServer.Chat
         }
 
         // The InputField needs an EventSystem to receive typing. Add one if
-        // the scene has none, with the input module the project uses.
-        static void EnsureEventSystem()
+        // there's none, with the input module the project uses, and keep it
+        // across scene loads if this object is kept.
+        void EnsureEventSystem()
         {
             if (EventSystem.current != null || FindAnyEventSystem() != null)
                 return;
@@ -429,6 +535,8 @@ namespace ChatServer.Chat
 #else
             go.AddComponent<StandaloneInputModule>();
 #endif
+            if (gameObject.scene.name == "DontDestroyOnLoad")
+                DontDestroyOnLoad(go);
         }
 
         static EventSystem FindAnyEventSystem()
@@ -446,6 +554,8 @@ namespace ChatServer.Chat
     // use only it.
     static class InputSystemKeys
     {
+        static readonly HashSet<KeyCode> Warned = new HashSet<KeyCode>();
+
         public static bool WasPressed(KeyCode key)
         {
             var keyboard = UnityEngine.InputSystem.Keyboard.current;
@@ -454,14 +564,25 @@ namespace ChatServer.Chat
             switch (key)
             {
                 case KeyCode.Return: return keyboard.enterKey.wasPressedThisFrame || keyboard.numpadEnterKey.wasPressedThisFrame;
+                case KeyCode.KeypadEnter: return keyboard.numpadEnterKey.wasPressedThisFrame;
                 case KeyCode.Escape: return keyboard.escapeKey.wasPressedThisFrame;
                 case KeyCode.Tab: return keyboard.tabKey.wasPressedThisFrame;
                 case KeyCode.Slash: return keyboard.slashKey.wasPressedThisFrame;
-                default:
-                    if (key >= KeyCode.A && key <= KeyCode.Z)
-                        return keyboard[UnityEngine.InputSystem.Key.A + (key - KeyCode.A)].wasPressedThisFrame;
-                    return false;
+                case KeyCode.BackQuote: return keyboard.backquoteKey.wasPressedThisFrame;
+                case KeyCode.Space: return keyboard.spaceKey.wasPressedThisFrame;
             }
+            if (key >= KeyCode.A && key <= KeyCode.Z)
+                return keyboard[UnityEngine.InputSystem.Key.A + (key - KeyCode.A)].wasPressedThisFrame;
+            // In the Input System's Key enum, Digit0 comes after Digit9.
+            if (key == KeyCode.Alpha0)
+                return keyboard.digit0Key.wasPressedThisFrame;
+            if (key >= KeyCode.Alpha1 && key <= KeyCode.Alpha9)
+                return keyboard[UnityEngine.InputSystem.Key.Digit1 + (key - KeyCode.Alpha1)].wasPressedThisFrame;
+            if (key >= KeyCode.F1 && key <= KeyCode.F12)
+                return keyboard[UnityEngine.InputSystem.Key.F1 + (key - KeyCode.F1)].wasPressedThisFrame;
+            if (Warned.Add(key))
+                Debug.LogWarning($"[chat] key {key} isn't mapped for the Input System; pick a letter, digit, F-key, Enter, Esc, Tab, Slash, BackQuote or Space");
+            return false;
         }
     }
 #endif

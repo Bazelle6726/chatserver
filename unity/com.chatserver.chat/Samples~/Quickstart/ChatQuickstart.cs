@@ -6,6 +6,10 @@
 // To chat with yourself, build the game and run it next to the Editor with a
 // different name.
 //
+// Unity 2022.1 and newer block plain http:// by default. For this local test,
+// set Project Settings > Player > Other Settings > Allow downloads over HTTP
+// to "Allowed in development builds".
+//
 // This logs in with a password, which is only for trying it out. In a real
 // game, your backend calls POST /game/sessions and passes the token to
 // ChatClient.Connect instead: see the package README.

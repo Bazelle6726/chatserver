@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -47,7 +48,8 @@ import (
 //
 // Error codes: invalid, unauthenticated, forbidden, not_found, conflict,
 // rate_limited, too_large, unavailable, internal. An error about one request
-// leaves the connection open; a failed login closes it.
+// leaves the connection open; a failed login closes it, with code 4401 if
+// the token was refused (get a new one) or 1013 if it's worth retrying later.
 //
 // The token travels in the first frame, not the URL or a header, because
 // browsers (and so Unity WebGL builds) can't set headers on a WebSocket, and
@@ -111,8 +113,12 @@ func (a *API) websocket(c *gin.Context) {
 	defer cancel()
 
 	user, ref, err := a.wsAuth(ctx, conn)
+	if errors.Is(err, errWSGone) {
+		return
+	}
 	if err != nil {
-		conn.Close(websocket.StatusPolicyViolation, "login failed: "+err.Error())
+		code, reason := wsLoginFailed(err)
+		conn.Close(code, reason)
 		return
 	}
 	c.Set(userKey, user) // so RequestLog names the user
@@ -142,16 +148,52 @@ func (a *API) websocket(c *gin.Context) {
 	conn.Close(websocket.StatusNormalClosure, "")
 }
 
+// Close codes for a failed login. 4000-4999 are free for applications.
+const (
+	// wsCloseBadLogin: the token is unknown, expired or missing. Retrying with
+	// the same token won't help: the client needs a new one.
+	wsCloseBadLogin = websocket.StatusCode(4401)
+	// A rate limit or a server problem uses websocket.StatusTryAgainLater
+	// (1013): the client should reconnect after a pause.
+)
+
+// wsLoginFailed picks the close code and reason for a failed login. Server
+// errors don't put their details in the reason, which the client sees.
+func wsLoginFailed(err error) (websocket.StatusCode, string) {
+	switch status := statusFor(err); {
+	case status == http.StatusTooManyRequests:
+		return websocket.StatusTryAgainLater, "login failed: too many requests, try again later"
+	case status >= 500:
+		if status == http.StatusInternalServerError {
+			slog.Error("internal error", "route", "/ws", "err", err)
+		}
+		return websocket.StatusTryAgainLater, "login failed: try again later"
+	default:
+		reason := "login failed: " + err.Error()
+		if len(reason) > 120 { // a close reason must fit in 123 bytes
+			reason = reason[:120]
+		}
+		return wsCloseBadLogin, reason
+	}
+}
+
 // wsAuth reads the first frame, which must log in.
 func (a *API) wsAuth(ctx context.Context, conn *websocket.Conn) (*chat.User, string, error) {
 	authCtx, cancel := context.WithTimeout(ctx, wsAuthTimeout)
 	defer cancel()
 	var f wsFrame
 	if err := readFrame(authCtx, conn, &f); err != nil {
-		return nil, "", err
+		switch {
+		case errors.Is(err, errBadFrame):
+			return nil, "", err
+		case authCtx.Err() == context.DeadlineExceeded && ctx.Err() == nil:
+			return nil, "", invalid("auth", "no auth frame within 10 seconds")
+		default:
+			return nil, "", errWSGone // the client hung up: nothing to answer
+		}
 	}
 	if f.Type != "auth" {
-		return nil, "", errors.New(`the first frame must be {"type":"auth","token":"..."}`)
+		return nil, "", invalid("type", `the first frame must be {"type":"auth","token":"..."}`)
 	}
 	user, err := a.svc.Authenticate(ctx, f.Token)
 	if err != nil {
@@ -162,6 +204,9 @@ func (a *API) wsAuth(ctx context.Context, conn *websocket.Conn) (*chat.User, str
 	}
 	return user, f.Ref, nil
 }
+
+// errWSGone means the client disconnected before logging in.
+var errWSGone = errors.New("client went away")
 
 // errBadFrame is a frame that isn't a JSON text object: the client gets an
 // error frame, and the connection stays open.
@@ -370,13 +415,19 @@ func (wc *wsConn) fail(ref string, err error) {
 
 // writer is the only goroutine that writes to the connection.
 func (wc *wsConn) writer() {
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	// By default Go escapes < > & into 6-byte codes: pointless
+	// here (it's not HTML), and it can make a frame of history 6 times bigger.
+	enc.SetEscapeHTML(false)
 	for f := range wc.out {
-		data, err := json.Marshal(f)
-		if err != nil {
+		buf.Reset()
+		if err := enc.Encode(f); err != nil {
 			continue
 		}
+		data := bytes.TrimSuffix(buf.Bytes(), []byte{'\n'}) // Encode adds a newline
 		ctx, cancel := context.WithTimeout(context.Background(), wsWriteTimeout)
-		err = wc.conn.Write(ctx, websocket.MessageText, data)
+		err := wc.conn.Write(ctx, websocket.MessageText, data)
 		cancel()
 		if err != nil {
 			wc.cancel()

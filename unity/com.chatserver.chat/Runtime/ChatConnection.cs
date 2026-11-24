@@ -28,7 +28,10 @@ namespace ChatServer.Chat
 
     public sealed class ChatConnection : IDisposable
     {
-        const int MaxFrameBytes = 1 << 20; // a joined frame with 500 messages of history fits easily
+        // A joined frame with 500 messages of history, every one at the
+        // 500-character limit in 4-byte characters, is about 1.1 MB: this
+        // leaves plenty of room.
+        const int MaxFrameBytes = 4 << 20;
 
         readonly Uri _uri;
         readonly ClientWebSocket _socket = new ClientWebSocket();
@@ -36,6 +39,7 @@ namespace ChatServer.Chat
         readonly ConcurrentQueue<ChatIncoming> _incoming = new ConcurrentQueue<ChatIncoming>();
         readonly SemaphoreSlim _sendLock = new SemaphoreSlim(1, 1); // a WebSocket allows one send at a time
         int _ended; // 1 once the end has been queued
+        int _disposed; // 1 once Dispose has run
 
         public ChatConnection(Uri uri)
         {
@@ -94,6 +98,16 @@ namespace ChatServer.Chat
                     if (result.MessageType == WebSocketMessageType.Close)
                     {
                         End(_socket.CloseStatus, _socket.CloseStatusDescription);
+                        // Answer the server's close, as the protocol asks.
+                        try
+                        {
+                            if (_socket.State == WebSocketState.CloseReceived)
+                                await _socket.CloseOutputAsync(WebSocketCloseStatus.NormalClosure, "", CancellationToken.None);
+                        }
+                        catch (Exception)
+                        {
+                            // It's ending anyway.
+                        }
                         return;
                     }
                     frame.Write(buffer, 0, result.Count);
@@ -121,20 +135,47 @@ namespace ChatServer.Chat
                 _incoming.Enqueue(new ChatIncoming { CloseStatus = status, CloseReason = reason });
         }
 
-        /// <summary>Closes the connection politely (best effort) and frees it.</summary>
+        /// <summary>
+        /// Closes the connection politely (best effort, in the background:
+        /// the game never waits on the network) and frees it.
+        /// </summary>
         public void Dispose()
         {
+            if (Interlocked.Exchange(ref _disposed, 1) == 1)
+                return;
             if (_socket.State == WebSocketState.Open)
             {
-                // Fire and forget: the game shouldn't wait on the network to quit.
-                _ = _socket.CloseOutputAsync(WebSocketCloseStatus.NormalClosure, "bye", CancellationToken.None)
-                    .ContinueWith(_ => _socket.Dispose());
+                _ = CloseAndFree();
             }
             else
             {
+                _cts.Cancel();
                 _socket.Dispose();
             }
-            _cts.Cancel();
+        }
+
+        async Task CloseAndFree()
+        {
+            try
+            {
+                // Only one send at a time: wait briefly for one in progress.
+                if (await _sendLock.WaitAsync(TimeSpan.FromSeconds(1)))
+                {
+                    using (var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(2)))
+                        await _socket.CloseOutputAsync(WebSocketCloseStatus.NormalClosure, "bye", timeout.Token);
+                }
+            }
+            catch (Exception)
+            {
+                // Best effort: the server copes with a connection that just drops.
+            }
+            finally
+            {
+                // Only now stop the receive loop: cancelling a pending receive
+                // aborts the socket, which would swallow the close frame.
+                _cts.Cancel();
+                _socket.Dispose();
+            }
         }
     }
 }

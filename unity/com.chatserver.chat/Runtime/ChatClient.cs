@@ -9,7 +9,6 @@
 //     chat.Send(roomId, "gg");
 using System;
 using System.Collections.Generic;
-using System.Net.WebSockets;
 using UnityEngine;
 
 namespace ChatServer.Chat
@@ -17,6 +16,15 @@ namespace ChatServer.Chat
     [DisallowMultipleComponent]
     public class ChatClient : MonoBehaviour
     {
+        // Close codes the server uses for a failed login (see ws.go).
+        const int CloseBadLogin = 4401;     // the token was refused: retrying won't help
+        const int CloseTryAgainLater = 1013; // rate limited or a server problem: retry later
+
+        // A connection that lasts this long is "healthy": the reconnect delay
+        // starts again from 1 second. Shorter ones keep backing off, so a
+        // connection that fails right after logging in can't loop quickly.
+        const float HealthySeconds = 10f;
+
         [Tooltip("The chat server's WebSocket address. Use wss:// once the server is behind HTTPS.")]
         public string serverUrl = "ws://localhost:8080/ws";
 
@@ -55,13 +63,15 @@ namespace ChatServer.Chat
         public IReadOnlyDictionary<string, ChatRoom> Rooms => _rooms;
 
         readonly Dictionary<string, ChatRoom> _rooms = new Dictionary<string, ChatRoom>();
-        readonly List<ChatRequest> _pending = new List<ChatRequest>(); // asked for before logging in
+        readonly List<ChatRequest> _pending = new List<ChatRequest>();                    // to send once logged in
+        readonly Dictionary<string, ChatRequest> _inflight = new Dictionary<string, ChatRequest>(); // joins sent, not yet answered, by ref
         ChatConnection _connection;
         string _token;
         bool _wantConnected;
         bool _joinedOnConnect; // joinOnConnect runs once per Connect(), not on every reconnect
         float _reconnectAt = -1;
         float _reconnectDelay = 1;
+        float _connectedAt;
         int _nextRef;
 
         /// <summary>Connects with a session token (from your game backend, or ChatDevAuth when testing).</summary>
@@ -72,15 +82,22 @@ namespace ChatServer.Chat
             _token = token;
             _wantConnected = true;
             _joinedOnConnect = false;
+            _reconnectAt = -1; // a retry scheduled for the old token must not replace this connection
             _reconnectDelay = 1;
             Open();
         }
 
-        /// <summary>Disconnects and stops reconnecting.</summary>
+        /// <summary>
+        /// Disconnects, stops reconnecting, and forgets the rooms, so a later
+        /// Connect (perhaps as another player) starts clean.
+        /// </summary>
         public void Disconnect()
         {
             _wantConnected = false;
             _reconnectAt = -1;
+            _rooms.Clear();
+            _pending.Clear();
+            _inflight.Clear();
             Close("disconnected", false);
         }
 
@@ -89,17 +106,18 @@ namespace ChatServer.Chat
         /// your game backend added you to. Before connecting, it's queued.
         /// </summary>
         public string JoinByName(string roomName) =>
-            Request(new ChatRequest { type = "join", room_name = roomName, limit = historyLimit });
+            Request(new ChatRequest { type = "join", room_name = roomName, limit = HistoryLimit });
 
         /// <summary>Joins a room by ID.</summary>
         public string JoinById(string roomId) =>
-            Request(new ChatRequest { type = "join", room_id = roomId, limit = historyLimit });
+            Request(new ChatRequest { type = "join", room_id = roomId, limit = HistoryLimit });
 
         /// <summary>Stops receiving a room (you stay a member).</summary>
-        public string Leave(string roomId)
+        public void Leave(string roomId)
         {
             _rooms.Remove(roomId);
-            return Request(new ChatRequest { type = "leave", room_id = roomId });
+            if (IsConnected) // offline, forgetting it is enough: it won't be rejoined
+                Request(new ChatRequest { type = "leave", room_id = roomId });
         }
 
         /// <summary>
@@ -111,11 +129,14 @@ namespace ChatServer.Chat
             if (!IsConnected)
             {
                 var r = NextRef();
-                Error?.Invoke(new ChatError("not_connected", "not connected to the chat server", r));
+                Raise(() => Error?.Invoke(new ChatError("not_connected", "not connected to the chat server", r)));
                 return r;
             }
             return Request(new ChatRequest { type = "send", room_id = roomId, text = text });
         }
+
+        // The server accepts 1-500; the Inspector's range doesn't stop code setting more.
+        int HistoryLimit => Mathf.Clamp(historyLimit, 1, 500);
 
         string NextRef() => (++_nextRef).ToString();
 
@@ -131,9 +152,14 @@ namespace ChatServer.Chat
 
         async void Transmit(ChatRequest request)
         {
+            // Remember joins until answered, so one lost to a dropped
+            // connection is sent again after reconnecting.
+            if (request.type == "join")
+                _inflight[request.@ref] = request;
+            var connection = _connection;
             try
             {
-                await _connection.SendAsync(request);
+                await connection.SendAsync(request);
             }
             catch (Exception e)
             {
@@ -145,17 +171,16 @@ namespace ChatServer.Chat
         async void Open()
         {
             Close(null, false);
-            Uri uri;
+            ChatConnection connection;
             try
             {
-                uri = new Uri(serverUrl);
+                connection = new ChatConnection(new Uri(serverUrl));
             }
-            catch (UriFormatException e)
+            catch (Exception e)
             {
-                Debug.LogError($"[chat] bad serverUrl {serverUrl}: {e.Message}");
+                Debug.LogError($"[chat] can't connect to {serverUrl}: {e.Message}");
                 return;
             }
-            var connection = new ChatConnection(uri);
             _connection = connection;
             try
             {
@@ -168,28 +193,33 @@ namespace ChatServer.Chat
             }
         }
 
+        // Closes the connection. Joins still unanswered go back in the queue.
         void Close(string reason, bool willRetry)
         {
             if (_connection == null)
                 return;
             _connection.Dispose();
             _connection = null;
+            _pending.InsertRange(0, _inflight.Values);
+            _inflight.Clear();
             var wasConnected = Me != null;
             Me = null;
             if (reason != null && wasConnected)
-                Disconnected?.Invoke(reason, willRetry);
+                Raise(() => Disconnected?.Invoke(reason, willRetry));
         }
 
         // The connection failed or dropped: try again later, if still wanted.
         void Lost(string reason)
         {
             var retry = _wantConnected;
+            if (retry)
+            {
+                // Schedule first, so a throwing Disconnected handler can't stop it.
+                _reconnectAt = Time.unscaledTime + _reconnectDelay;
+                Debug.Log($"[chat] {reason}; retrying in {_reconnectDelay:0}s");
+                _reconnectDelay = Mathf.Min(_reconnectDelay * 2, maxReconnectDelay);
+            }
             Close(reason, retry);
-            if (!retry)
-                return;
-            _reconnectAt = Time.unscaledTime + _reconnectDelay;
-            _reconnectDelay = Mathf.Min(_reconnectDelay * 2, maxReconnectDelay);
-            Debug.Log($"[chat] {reason}; retrying in {_reconnectAt - Time.unscaledTime:0}s");
         }
 
         void Update()
@@ -199,6 +229,8 @@ namespace ChatServer.Chat
                 _reconnectAt = -1;
                 Open();
             }
+            if (_reconnectDelay > 1 && IsConnected && Time.unscaledTime - _connectedAt > HealthySeconds)
+                _reconnectDelay = 1;
             if (_connection == null)
                 return;
 
@@ -215,14 +247,17 @@ namespace ChatServer.Chat
         void Ended(ChatIncoming end)
         {
             var reason = end.CloseReason ?? "connection closed";
-            if (end.CloseStatus == WebSocketCloseStatus.PolicyViolation && reason.StartsWith("login failed"))
+            if (end.CloseStatus.HasValue && (int)end.CloseStatus.Value == CloseBadLogin)
             {
                 // A bad or expired token: retrying won't help.
                 _wantConnected = false;
+                _reconnectAt = -1;
                 Close(reason, false);
-                AuthFailed?.Invoke(reason);
+                Raise(() => AuthFailed?.Invoke(reason));
                 return;
             }
+            // Everything else, including CloseTryAgainLater (rate limited at
+            // login, or a server problem), is worth retrying with backoff.
             Lost(reason);
         }
 
@@ -242,30 +277,38 @@ namespace ChatServer.Chat
             {
                 case "ready":
                     Me = f.user;
-                    _reconnectDelay = 1;
-                    Connected?.Invoke(f.user);
-                    Rejoin();
+                    _connectedAt = Time.unscaledTime;
+                    Rejoin(); // before the event, so a throwing handler can't stop it
+                    Raise(() => Connected?.Invoke(f.user));
                     break;
                 case "joined":
+                    Answered(f.@ref);
                     if (f.room != null && !string.IsNullOrEmpty(f.room.id))
                         _rooms[f.room.id] = f.room;
-                    Joined?.Invoke(f.room, f.history ?? new ChatMessage[0]);
+                    Raise(() => Joined?.Invoke(f.room, f.history ?? new ChatMessage[0]));
                     break;
                 case "message":
-                    MessageReceived?.Invoke(f.message);
+                    Raise(() => MessageReceived?.Invoke(f.message));
                     break;
                 case "left":
                     _rooms.Remove(f.room_id);
-                    Left?.Invoke(f.room_id, f.reason);
                     // Dropped for reading too slowly: join again to catch up.
-                    if (f.reason != null && f.reason.StartsWith("dropped"))
+                    if (f.reason != null && f.reason.StartsWith("dropped", StringComparison.Ordinal))
                         JoinById(f.room_id);
+                    Raise(() => Left?.Invoke(f.room_id, f.reason));
                     break;
                 case "error":
-                    Error?.Invoke(new ChatError(f.code, f.error, f.@ref));
+                    Answered(f.@ref);
+                    Raise(() => Error?.Invoke(new ChatError(f.code, f.error, f.@ref)));
                     break;
                 // "sent" and "pong" need nothing: your message arrives as "message" too.
             }
+        }
+
+        void Answered(string @ref)
+        {
+            if (!string.IsNullOrEmpty(@ref))
+                _inflight.Remove(@ref);
         }
 
         // After logging in: rooms from before a reconnect, then anything asked
@@ -273,17 +316,23 @@ namespace ChatServer.Chat
         void Rejoin()
         {
             var requests = new List<ChatRequest>();
+            var rejoining = new HashSet<string>();
             foreach (var id in _rooms.Keys)
-                requests.Add(new ChatRequest { type = "join", room_id = id, limit = historyLimit });
+            {
+                requests.Add(new ChatRequest { type = "join", room_id = id, limit = HistoryLimit });
+                rejoining.Add(id);
+            }
             _rooms.Clear();
-            requests.AddRange(_pending);
+            foreach (var r in _pending)
+                if (!(r.type == "join" && rejoining.Contains(r.room_id ?? "")))
+                    requests.Add(r);
             _pending.Clear();
             if (!_joinedOnConnect)
             {
                 _joinedOnConnect = true;
                 foreach (var name in joinOnConnect)
                     if (!string.IsNullOrWhiteSpace(name))
-                        requests.Add(new ChatRequest { type = "join", room_name = name, limit = historyLimit });
+                        requests.Add(new ChatRequest { type = "join", room_name = name, limit = HistoryLimit });
             }
             foreach (var r in requests)
             {
@@ -293,7 +342,35 @@ namespace ChatServer.Chat
             }
         }
 
-        void OnDestroy() => Disconnect();
-        void OnApplicationQuit() => Disconnect();
+        // Game code subscribed to the events; an exception there is logged,
+        // never allowed to break the client.
+        static void Raise(Action raise)
+        {
+            try
+            {
+                raise();
+            }
+            catch (Exception e)
+            {
+                Debug.LogException(e);
+            }
+        }
+
+        // Quitting or destroyed: close without raising events, so listeners
+        // that are being torn down too aren't called.
+        void Shutdown()
+        {
+            _wantConnected = false;
+            _reconnectAt = -1;
+            if (_connection != null)
+            {
+                _connection.Dispose();
+                _connection = null;
+            }
+            Me = null;
+        }
+
+        void OnDestroy() => Shutdown();
+        void OnApplicationQuit() => Shutdown();
     }
 }

@@ -1,11 +1,13 @@
 {
     "name": "com.chatserver.chat",
-    "version": "0.1.0",
+    "version": "0.1.1",
     "displayName": "Chat Server Client",
     "description": "In-game chat for the Go chat server: a WebSocket client with reconnects, private match rooms, and a ready-made chat box (Enter or T to type, messages fade, Tab switches rooms).",
     "unity": "2021.3",
     "dependencies": {
-        "com.unity.ugui": "1.0.0"
+        "com.unity.ugui": "1.0.0",
+        "com.unity.modules.jsonserialize": "1.0.0",
+        "com.unity.modules.unitywebrequest": "1.0.0"
     },
     "keywords": [
         "chat",
