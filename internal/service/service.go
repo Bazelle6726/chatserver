@@ -18,10 +18,14 @@ package service
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"golang.org/x/crypto/bcrypt"
 
@@ -166,6 +170,14 @@ func (s *Service) Login(ctx context.Context, name, password string) (*chat.User,
 	hash, err := s.store.PasswordHash(ctx, u.ID)
 	if err != nil {
 		return nil, "", err
+	}
+	// A user without a password (a game's player, signed in by the game)
+	// can never log in this way. Check against the dummy hash anyway, so
+	// this takes as long as a wrong password and doesn't reveal the account
+	// belongs to a game player.
+	if len(hash) == 0 {
+		auth.CheckPassword(s.dummy(), password)
+		return nil, "", ErrBadCredentials
 	}
 	if !auth.CheckPassword(hash, password) {
 		return nil, "", ErrBadCredentials
@@ -418,4 +430,107 @@ func (s *Service) JoinAndWatch(ctx context.Context, user chat.UserID, roomID cha
 		return nil, nil, err
 	}
 	return s.Watch(ctx, user, roomID)
+}
+
+// ---- Games ----
+//
+// A game's own backend signs its players in and sets up their match rooms,
+// using a secret key (see package api, /game routes). Players never get a
+// chat password: the game hands each one the session token it gets here.
+
+// Limits on what a game sends.
+const (
+	MaxPlayerIDLen     = 128 // characters in a game's player ID
+	MaxPlayersPerCall  = 500 // players added to a match room in one call
+	playerNameAttempts = 5   // how many names GameSession tries for a new player
+)
+
+// GameSession signs in the game's player playerID and returns their chat
+// user and a session token. A player the chat server hasn't seen before gets
+// a chat user named after displayName, made valid (see chatName); if that's
+// taken, a short random suffix is added ("Ace-3f9c"). A returning player
+// keeps the name they were first given.
+func (s *Service) GameSession(ctx context.Context, playerID, displayName string) (*chat.User, string, error) {
+	if playerID == "" || len([]rune(playerID)) > MaxPlayerIDLen {
+		return nil, "", invalid("player_id", "must be 1-128 characters")
+	}
+	base := chatName(displayName)
+	var u *chat.User
+	var err error
+	for attempt := range playerNameAttempts {
+		name := base
+		if attempt > 0 {
+			name = withSuffix(base)
+		}
+		u, err = s.store.UserForPlayer(ctx, playerID, name)
+		if !errors.Is(err, chat.ErrAlreadyExists) {
+			break
+		}
+	}
+	if err != nil {
+		return nil, "", err
+	}
+	token, err := s.sessions.Start(u.ID)
+	if err != nil {
+		return nil, "", err
+	}
+	return u, token, nil
+}
+
+// GameMatchRoom is MatchRoom with the game's player IDs instead of chat user
+// IDs. Every player must have signed in through GameSession first.
+func (s *Service) GameMatchRoom(ctx context.Context, name string, maxHistory int, playerIDs []string) (*chat.Room, error) {
+	if len(playerIDs) > MaxPlayersPerCall {
+		return nil, invalid("players", "at most 500 per call")
+	}
+	ids := make([]chat.UserID, 0, len(playerIDs))
+	for _, p := range playerIDs {
+		u, err := s.store.UserByPlayer(ctx, p)
+		if err != nil {
+			return nil, err
+		}
+		ids = append(ids, u.ID)
+	}
+	return s.MatchRoom(ctx, name, maxHistory, ids)
+}
+
+// chatName turns a game's display name into a valid chat name: spaces become
+// "_", anything else that isn't a letter, digit, "-" or "_" is dropped, and
+// it's cut to the longest name allowed. A name that's left too short, or that
+// mixes look-alike scripts, becomes "player".
+func chatName(display string) string {
+	var b strings.Builder
+	n := 0
+	for _, r := range strings.TrimSpace(display) {
+		if n == chat.MaxNameLen {
+			break
+		}
+		switch {
+		case unicode.IsLetter(r) || unicode.IsDigit(r) || r == '-' || r == '_':
+			b.WriteRune(r)
+		case unicode.IsSpace(r):
+			b.WriteRune('_')
+		default:
+			continue
+		}
+		n++
+	}
+	name := b.String()
+	if chat.ValidateName(name) != nil {
+		return "player"
+	}
+	return name
+}
+
+// withSuffix adds "-" and 4 random hex digits to base, shortening base if
+// needed so the result is still a valid length.
+func withSuffix(base string) string {
+	b := make([]byte, 2)
+	rand.Read(b) // never fails (crypto/rand panics instead)
+	suffix := "-" + hex.EncodeToString(b)
+	runes := []rune(base)
+	if keep := chat.MaxNameLen - len(suffix); len(runes) > keep {
+		runes = runes[:keep]
+	}
+	return string(runes) + suffix
 }

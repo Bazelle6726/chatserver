@@ -55,5 +55,13 @@ func (a *API) Router() *gin.Engine {
 		admin.DELETE("/banned-words/:word", a.removeBannedWord)
 	}
 
+	// The game API: called by a game's backend, never by players. Not
+	// limited per IP, since one backend signs in every player; wrong keys
+	// are locked out like wrong admin tokens.
+	gameFailures := ratelimit.New(ratelimit.Per(adminMaxFailures, adminFailureWindow), adminMaxFailures)
+	game := r.Group("/game", RequireKey("game API", gameKeyHeader, a.gameKey, gameFailures))
+	game.POST("/sessions", a.gameSession)
+	game.POST("/rooms", a.gameRoom)
+
 	return r
 }

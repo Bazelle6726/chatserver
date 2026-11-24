@@ -138,7 +138,7 @@ func run(cfg config.Config, logger *slog.Logger) error {
 
 	// HTTP. Listen first, so a port that's taken is reported straight away.
 	gin.SetMode(gin.ReleaseMode) // no debug banner; requests are logged by api.RequestLog
-	a := api.New(svc, limits).WithModeration(words, cfg.BannedWordsPath, cfg.AdminToken).WithWeb(app)
+	a := api.New(svc, limits).WithModeration(words, cfg.BannedWordsPath, cfg.AdminToken).WithGame(cfg.GameKey).WithWeb(app)
 	httpLis, err := net.Listen("tcp", cfg.HTTPAddr)
 	if err != nil {
 		return err

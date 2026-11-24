@@ -26,22 +26,28 @@ const (
 )
 
 // AdminOnly lets a request through only if it carries the right admin token.
-// failures counts wrong tokens per client IP; an IP that has used up its
-// allowance gets 429 without its token even being checked.
 func AdminOnly(token string, failures *ratelimit.Limiter) gin.HandlerFunc {
+	return RequireKey("admin API", adminTokenHeader, token, failures)
+}
+
+// RequireKey lets a request through only if its header carries key. It guards
+// the admin API and the game API. An empty key turns the API off (404).
+// failures counts wrong keys per client IP; an IP that has used up its
+// allowance gets 429 without its key even being checked.
+func RequireKey(what, header, key string, failures *ratelimit.Limiter) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		if token == "" {
-			c.AbortWithStatusJSON(http.StatusNotFound, gin.H{"error": "admin API is off"})
+		if key == "" {
+			c.AbortWithStatusJSON(http.StatusNotFound, gin.H{"error": what + " is off"})
 			return
 		}
 		ip := c.ClientIP() // the real peer address: see SetTrustedProxies in Router
 		if failures.Blocked(ip) {
-			c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{"error": "too many wrong admin tokens, try again later"})
+			c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{"error": "too many wrong keys, try again later"})
 			return
 		}
-		if subtle.ConstantTimeCompare([]byte(c.GetHeader(adminTokenHeader)), []byte(token)) != 1 {
+		if subtle.ConstantTimeCompare([]byte(c.GetHeader(header)), []byte(key)) != 1 {
 			failures.Allow(ip) // record the failure
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "missing or wrong X-Admin-Token"})
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "missing or wrong " + header})
 			return
 		}
 		c.Next()

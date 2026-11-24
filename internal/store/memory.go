@@ -24,6 +24,7 @@ type MemoryStore struct {
 	rooms      map[chat.RoomID]*chat.Room
 	userNames  map[string]chat.UserID
 	passwords  map[chat.UserID][]byte // bcrypt hashes, kept apart from chat.User so they never reach an API response
+	players    map[string]chat.UserID // game player ID -> chat user, for users the game signs in
 	roomNames  map[string]chat.RoomID
 	nextUserID func() string
 	nextRoomID func() string
@@ -51,6 +52,7 @@ func NewMemoryStore(opts ...Option) *MemoryStore {
 		rooms:      make(map[chat.RoomID]*chat.Room),
 		userNames:  make(map[string]chat.UserID),
 		passwords:  make(map[chat.UserID][]byte),
+		players:    make(map[string]chat.UserID),
 		roomNames:  make(map[string]chat.RoomID),
 		nextUserID: NewRandomIDGenerator("u"),
 		nextRoomID: NewIDGenerator("r"),
@@ -94,6 +96,48 @@ func (s *MemoryStore) CreateUser(ctx context.Context, name string, passwordHash 
 	s.userNames[key] = user.ID
 	s.passwords[user.ID] = passwordHash
 	return user, nil
+}
+
+// UserForPlayer returns the chat user linked to a game's player ID, creating
+// one called name (with no password) if the player is new. It's one step
+// under one lock, so two sign-ins for the same new player can't create two
+// users. A new player whose name is taken gets ErrAlreadyExists: the caller
+// picks another name and tries again.
+func (s *MemoryStore) UserForPlayer(ctx context.Context, playerID, name string) (*chat.User, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if id, ok := s.players[playerID]; ok {
+		return s.users[id], nil
+	}
+	if err := chat.ValidateName(name); err != nil {
+		return nil, err
+	}
+	key := textnorm.Skeleton(name)
+	if _, taken := s.userNames[key]; taken {
+		return nil, fmt.Errorf("user %q: %w", name, chat.ErrAlreadyExists)
+	}
+	user := &chat.User{ID: chat.UserID(s.nextUserID()), Name: name, Role: chat.RoleMember}
+	s.users[user.ID] = user
+	s.userNames[key] = user.ID
+	s.passwords[user.ID] = nil // no password: only the game can sign this user in
+	s.players[playerID] = user.ID
+	return user, nil
+}
+
+// UserByPlayer finds the chat user linked to a game's player ID.
+func (s *MemoryStore) UserByPlayer(ctx context.Context, playerID string) (*chat.User, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if id, ok := s.players[playerID]; ok {
+		return s.users[id], nil
+	}
+	return nil, fmt.Errorf("player %q: %w", playerID, chat.ErrUserNotFound)
 }
 
 // UserByName finds a user by name. Names are matched by their skeleton, the

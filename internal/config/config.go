@@ -7,9 +7,10 @@
 //	go run ./cmd/server -http-addr :8080          # flag
 //	CHAT_HTTP_ADDR=:8080 go run ./cmd/server      # environment (bash)
 //
-// The admin token is the exception: it's read only from CHAT_ADMIN_TOKEN,
-// never from a flag, because a process's flags can be seen by every user on
-// the machine (in ps, Task Manager, ...).
+// The secrets are the exception: the admin token and the game key are read
+// only from CHAT_ADMIN_TOKEN and CHAT_GAME_KEY, never from a flag, because a
+// process's flags can be seen by every user on the machine (in ps, Task
+// Manager, ...).
 package config
 
 import (
@@ -33,6 +34,7 @@ type Config struct {
 
 	BannedWordsPath string // the moderation list, read at start and saved on change
 	AdminToken      string // "" turns the admin API off
+	GameKey         string // "" turns the game API off
 
 	RequestsPerSecond float64 // per logged-in user; 0 = no limit
 	PostsPerSecond    float64 // messages per user; 0 = no limit
@@ -119,6 +121,14 @@ func Load(args []string, getenv func(string) string, out io.Writer) (cfg Config,
 		// A short token can be guessed, even with the lockout on wrong ones.
 		warnings = append(warnings, fmt.Sprintf("admin API off: CHAT_ADMIN_TOKEN must be at least %d characters", MinAdminTokenLen))
 		cfg.AdminToken = ""
+	}
+	cfg.GameKey = getenv("CHAT_GAME_KEY")
+	switch {
+	case cfg.GameKey == "":
+		warnings = append(warnings, "game API off (set CHAT_GAME_KEY to turn it on)")
+	case len(cfg.GameKey) < MinAdminTokenLen:
+		warnings = append(warnings, fmt.Sprintf("game API off: CHAT_GAME_KEY must be at least %d characters", MinAdminTokenLen))
+		cfg.GameKey = ""
 	}
 	return cfg, warnings, nil
 }

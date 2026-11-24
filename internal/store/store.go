@@ -22,6 +22,10 @@ type Store interface {
 	UserByName(ctx context.Context, name string) (*chat.User, error)
 	PasswordHash(ctx context.Context, id chat.UserID) ([]byte, error)
 
+	// Players: chat users a game signs in by its own player IDs.
+	UserForPlayer(ctx context.Context, playerID, name string) (*chat.User, error)
+	UserByPlayer(ctx context.Context, playerID string) (*chat.User, error)
+
 	CreateRoom(ctx context.Context, name string, maxHistory int, private bool) (*chat.Room, error)
 	GetRoom(ctx context.Context, id chat.RoomID) (*chat.Room, error)
 	RoomByName(ctx context.Context, name string) (*chat.Room, error)

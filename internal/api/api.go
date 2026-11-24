@@ -30,6 +30,7 @@ type API struct {
 	words      *moderation.List
 	wordsPath  string // where changes are saved ("" = don't save)
 	adminToken string // the X-Admin-Token admins must send ("" = admin API off)
+	gameKey    string // the X-Game-Key the game's backend must send ("" = game API off)
 
 	// The browser app's files (nil = no web app).
 	web fs.FS

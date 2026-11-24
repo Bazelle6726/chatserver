@@ -2,6 +2,7 @@ package service
 
 import (
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -312,5 +313,66 @@ func TestOpenRoom(t *testing.T) {
 	}
 	if _, err := svc.OpenRoom(ctx, alice, "x"); err == nil {
 		t.Error("OpenRoom with a bad name worked")
+	}
+}
+
+func TestChatName(t *testing.T) {
+	tests := []struct{ in, want string }{
+		{"Ace", "Ace"},
+		{"Big Ace 99", "Big_Ace_99"},
+		{"<Ace>!!", "Ace"},
+		{"x", "player"},      // too short
+		{"", "player"},       // empty
+		{"pаypal", "player"}, // mixes Latin and Cyrillic
+		{"ThisNameIsWayTooLongForChat", "ThisNameIsWayTooLong"}, // cut to 20
+	}
+	for _, tt := range tests {
+		if got := chatName(tt.in); got != tt.want {
+			t.Errorf("chatName(%q) = %q, want %q", tt.in, got, tt.want)
+		}
+	}
+	if s := withSuffix("ThisNameIsWayTooLong"); len([]rune(s)) != chat.MaxNameLen || chat.ValidateName(s) != nil {
+		t.Errorf("withSuffix of a 20-character name = %q, want a valid 20-character name", s)
+	}
+}
+
+func TestGameSessionAndMatchRoom(t *testing.T) {
+	svc := newTest()
+	ctx := t.Context()
+
+	ace, token, err := svc.GameSession(ctx, "steam:1001", "Ace")
+	if err != nil || ace.Name != "Ace" || token == "" {
+		t.Fatalf("GameSession = %v, %q, %v; want Ace and a token", ace, token, err)
+	}
+	if u, err := svc.Authenticate(ctx, token); err != nil || u.ID != ace.ID {
+		t.Errorf("the game-issued token doesn't log in as Ace: %v, %v", u, err)
+	}
+
+	// The same player again: same user, new session, first name kept.
+	again, token2, err := svc.GameSession(ctx, "steam:1001", "Ace The Great")
+	if err != nil || again.ID != ace.ID || again.Name != "Ace" || token2 == token {
+		t.Errorf("returning player = %v, %v; want the same Ace with a new token", again, err)
+	}
+
+	// Another player who wants the same name gets a suffix.
+	other, _, err := svc.GameSession(ctx, "steam:2002", "ace")
+	if err != nil || other.ID == ace.ID || !strings.HasPrefix(other.Name, "ace-") {
+		t.Errorf("second Ace = %v, %v; want a different user named ace-xxxx", other, err)
+	}
+
+	// Game players have no password: logging in with one fails.
+	if _, _, err := svc.Login(ctx, "Ace", ""); !errors.Is(err, ErrBadCredentials) {
+		t.Errorf("password login for a game player = %v, want ErrBadCredentials", err)
+	}
+
+	room, err := svc.GameMatchRoom(ctx, "match-77", 0, []string{"steam:1001", "steam:2002"})
+	if err != nil || !room.Private || !room.IsMember(ace.ID) || !room.IsMember(other.ID) {
+		t.Errorf("GameMatchRoom = %v, %v; want a private room with both players", room, err)
+	}
+	if _, err := svc.GameMatchRoom(ctx, "match-78", 0, []string{"steam:9999"}); !errors.Is(err, chat.ErrUserNotFound) {
+		t.Errorf("a player who never signed in = %v, want ErrUserNotFound", err)
+	}
+	if _, _, err := svc.GameSession(ctx, "", "Ace"); err == nil {
+		t.Error("an empty player ID was accepted")
 	}
 }
