@@ -162,3 +162,21 @@ func TestConcurrentUse(t *testing.T) {
 	}
 	wg.Wait()
 }
+
+// A missing list is created empty; an existing one is loaded as it is.
+func TestLoadOrCreate(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "banned_words.txt")
+	l, created, err := LoadOrCreate(path)
+	if err != nil || !created || len(l.Words()) != 0 {
+		t.Fatalf("missing file: list %v, created %v, err %v; want an empty list, created", l.Words(), created, err)
+	}
+	if data, err := os.ReadFile(path); err != nil || len(data) != 0 {
+		t.Errorf("created file = %q, %v; want an empty file", data, err)
+	}
+
+	os.WriteFile(path, []byte("scam\n"), 0o644)
+	l, created, err = LoadOrCreate(path)
+	if err != nil || created || !l.IsBanned("a scam") {
+		t.Errorf("existing file: created %v, err %v, scam banned %v; want it loaded, not created", created, err, l.IsBanned("a scam"))
+	}
+}

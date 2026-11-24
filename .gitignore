@@ -4,3 +4,6 @@
 
 
 *.exe
+# The banned-word list is each server's own: an admin fills it in, and it is
+# never committed. The server creates it empty on first start.
+banned_words.txt

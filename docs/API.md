@@ -47,7 +47,7 @@ curl -X POST localhost:8080/rooms/r-1/messages -H "Authorization: Bearer $TOKEN"
 curl -X POST localhost:8080/rooms/r-1/messages -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d '{"text":"cheap scam here"}'
 ```
 
-Both appear in the watcher immediately. The second arrives as `[removed]`, and the history shows it the same way:
+Both appear in the watcher immediately. If `scam` is on the [banned-word list](#moderation-and-the-admin-api) (it starts empty), the second arrives as `[removed]`, and the history shows it the same way:
 
 ```bash
 curl -H "Authorization: Bearer $TOKEN" "localhost:8080/rooms/r-1/messages?limit=10"
@@ -239,7 +239,9 @@ curl -X POST localhost:8080/game/rooms -H "X-Game-Key: $KEY" -H "Content-Type: a
 
 ## Moderation and the admin API
 
-Messages are checked against [`banned_words.txt`](../banned_words.txt), loaded at startup from the folder the server runs in.
+Messages are checked against `banned_words.txt`, loaded at startup from the folder the server runs in (or the `-banned-words` path).
+
+- **It starts blank.** The list is each server's own and is never committed (it's in `.gitignore`). If the file is missing, the server creates it empty and filters nothing until an admin adds words, by editing the file (then restarting) or through the admin API below.
 
 - **Format:** one word per line. Blank lines and lines starting with `#` are ignored.
 - **Matching:** whole words, ignoring case. With `scam` banned, "SCAM!" is caught but "scampi" isn't, so list every form you want caught.

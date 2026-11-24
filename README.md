@@ -14,7 +14,7 @@ A multi-room chat server written in Go. Messages are pushed live to everyone wat
 - **In-game chat for Unity**: a WebSocket endpoint, a game API so a game's backend can sign players in and make private match rooms, and a [Unity package](unity/com.chatserver.chat/README.md) with a ready-made chat box
 - **Accounts** with bcrypt-hashed passwords and random session tokens: an HttpOnly cookie in the browser, a Bearer token for everything else
 - **Rate limits** per user, per IP and per posted message, the same over HTTP and gRPC
-- **Moderation**: worker goroutines replace messages containing [banned words](banned_words.txt) with `[removed]`, and admins can change the list while the server runs
+- **Moderation**: worker goroutines replace messages containing banned words with `[removed]`. Each server keeps its own list in `banned_words.txt` (never committed), which admins fill in and change while it runs
 - **Safe under concurrency**, verified with Go's race detector, with **graceful shutdown**
 - **Built-in profiling** with `pprof`, a **load tester** and **benchmarks**
 - **Structured logs** with `log/slog` (text or JSON), and every setting as a flag or `CHAT_*` environment variable
@@ -54,7 +54,9 @@ Open **http://localhost:8080/** in two windows, a normal one and a private one, 
 
 1. **Window 1:** type the name `alice` and a password of 8 or more characters, click **Create account**, then add a room `general`.
 2. **Window 2:** create `bob` the same way, then click `general`.
-3. **Chat:** messages appear instantly in both. "cheap scam here" shows as *[removed]*, but "scampi" doesn't.
+3. **Chat:** messages appear instantly in both.
+
+The banned-word list starts empty: the server creates a blank `banned_words.txt` on first start. Add one word per line to it (then restart), or use the admin API below while it runs. With `scam` banned, "cheap scam here" shows as *[removed]*, but "scampi" doesn't.
 
 To use the **admin API** and the app's Moderation panel, set a secret token of at least 16 characters before starting the server:
 
@@ -119,7 +121,7 @@ On Windows, `-race` needs gcc; see [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
 
 ```
 chatserver/
-├── banned_words.txt   the moderation list
+├── banned_words.txt   the moderation list: made blank on first start, never committed
 ├── cmd/
 │   ├── server/        the chat server
 │   ├── client/        a gRPC client for the terminal

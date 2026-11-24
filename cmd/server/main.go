@@ -110,9 +110,14 @@ func run(cfg config.Config, logger *slog.Logger) error {
 
 	// The moderation pool: workers filter banned words, then publish to the hub.
 	// words.IsBanned is a "method value": a function bound to words.
-	words, err := moderation.Load(cfg.BannedWordsPath)
+	words, created, err := moderation.LoadOrCreate(cfg.BannedWordsPath)
 	if err != nil {
 		return err
+	}
+	if created {
+		logger.Info("created an empty banned-word list: add words with the admin API or by editing the file", "path", cfg.BannedWordsPath)
+	} else if len(words.Words()) == 0 {
+		logger.Info("the banned-word list is empty: nothing is filtered", "path", cfg.BannedWordsPath)
 	}
 	pool := hub.NewPool(words.IsBanned, h.Publish, 256)
 	pool.Start(runtime.NumCPU())

@@ -3,7 +3,9 @@ package moderation
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
+	"io/fs"
 	"maps"
 	"os"
 	"path/filepath"
@@ -60,6 +62,21 @@ func Load(path string) (*List, error) {
 		return nil, fmt.Errorf("reading %s: %w", path, err)
 	}
 	return l, nil
+}
+
+// LoadOrCreate is Load, except that a missing file is created empty (and the
+// list starts empty) instead of being an error. The server uses it, so a
+// fresh checkout starts with a blank list for an admin to fill in. created
+// reports whether the file was made.
+func LoadOrCreate(path string) (l *List, created bool, err error) {
+	l, err = Load(path)
+	if err == nil || !errors.Is(err, fs.ErrNotExist) {
+		return l, false, err
+	}
+	if err := os.WriteFile(path, nil, 0o644); err != nil {
+		return nil, false, fmt.Errorf("creating banned words file: %w", err)
+	}
+	return New(), true, nil
 }
 
 // leetDigits undoes the usual digit swaps: "sc4m" -> "scam", "fr4ud" -> "fraud".
