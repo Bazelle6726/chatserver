@@ -1,19 +1,20 @@
-import { useCallback, useEffect, useState } from "react";
+import { use, useState } from "react";
 import { api } from "../api.js";
 
-export default function RoomList({ current, refresh, onOpen, onError }) {
-  const [rooms, setRooms] = useState([]);
+// Load now, and again after every join (member counts move). The list is a
+// cached promise, read with use(): one request per user and join count, so
+// a re-render doesn't fetch again, and another user never sees this one's.
+let cached = { key: null, rooms: null };
+function roomsFor(key, onError) {
+  if (cached.key !== key) {
+    cached = { key, rooms: api("GET", "/rooms").catch((e) => (onError(e), [])) };
+  }
+  return cached.rooms;
+}
+
+export default function RoomList({ me, current, refresh, onOpen, onError }) {
+  const rooms = use(roomsFor(`${me.id}:${refresh}`, onError));
   const [newRoom, setNewRoom] = useState("");
-
-  const load = useCallback(
-    () => api("GET", "/rooms").then(setRooms).catch(onError),
-    [onError],
-  );
-
-  // Load now, and again after every join (member counts move).
-  useEffect(() => {
-    load();
-  }, [load, refresh]);
 
   async function create() {
     try {

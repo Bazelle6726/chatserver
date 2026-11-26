@@ -16,6 +16,15 @@ linters:
     - govet
     - ineffassign
     - unused
+    # Was: internal/chat/errors.go, "Callers check them with errors.Is, which
+    # also works when they are wrapped". errorlint flags == and type
+    # assertions on errors, and fmt.Errorf that drops the chain (%v of an error).
+    - errorlint
+    # Was: internal/store/store.go, "Every method takes a context.Context first
+    # ... so a request that times out or whose client goes away stops its
+    # database work too." contextcheck flags a fresh context.Background()
+    # where the caller's ctx should flow through.
+    - contextcheck
 
   settings:
     depguard:

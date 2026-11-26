@@ -1,33 +1,25 @@
-import { useCallback, useEffect, useState } from "react";
+import { Suspense, startTransition, use, useState } from "react";
 import { api } from "./api.js";
 import SignIn from "./components/SignIn.jsx";
 import RoomList from "./components/RoomList.jsx";
 import ChatRoom from "./components/ChatRoom.jsx";
 import Moderation from "./components/Moderation.jsx";
 
+// After a reload, the session cookie may still be good: ask who we are.
+// A 401 just means not signed in.
+const userAtLoad = api("GET", "/me").catch(() => null);
+
 export default function App() {
-  const [me, setMe] = useState(null); // {id, name, role}
+  const signedInAtLoad = use(userAtLoad);
+  const [me, setMe] = useState(signedInAtLoad); // {id, name, role}
   const [room, setRoom] = useState(null); // {id, name, members}
-  const [status, setStatus] = useState({ text: "not signed in", error: false });
+  const [status, setStatus] = useState({ text: signedInAtLoad ? "signed in" : "not signed in", error: false });
   const [joins, setJoins] = useState(0); // bumped after each join, so the room list refreshes its counts
-  const joined = useCallback(() => setJoins((n) => n + 1), []);
 
-  // useCallback keeps these the same function between renders. Children use
-  // them in effect dependencies, and a new function each render would restart
-  // those effects (reconnecting the live feed) every time the status changed.
-  const say = useCallback((text) => setStatus({ text, error: false }), []);
-  const fail = useCallback((err) => setStatus({ text: err.message ?? String(err), error: true }), []);
-
-  // After a reload, the session cookie may still be good: ask who we are.
-  // A 401 just means not signed in.
-  useEffect(() => {
-    api("GET", "/me")
-      .then((user) => {
-        setMe(user);
-        say("signed in");
-      })
-      .catch(() => {});
-  }, [say]);
+  // In a transition, so the room list keeps showing while it reloads.
+  const joined = () => startTransition(() => setJoins((n) => n + 1));
+  const say = (text) => setStatus({ text, error: false });
+  const fail = (err) => setStatus({ text: err.message ?? String(err), error: true });
 
   function signedIn(user) {
     setMe(user);
@@ -57,7 +49,11 @@ export default function App() {
       <main>
         <aside>
           <SignIn me={me} onSignedIn={signedIn} onSignOut={signOut} onError={fail} />
-          {me && <RoomList current={room} refresh={joins} onOpen={setRoom} onError={fail} />}
+          {me && (
+            <Suspense fallback={<p className="count">Loading rooms…</p>}>
+              <RoomList me={me} current={room} refresh={joins} onOpen={setRoom} onError={fail} />
+            </Suspense>
+          )}
           <Moderation onStatus={say} onError={fail} />
         </aside>
 
