@@ -19,7 +19,6 @@ package service
 import (
 	"context"
 	"crypto/rand"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"strings"
@@ -32,6 +31,7 @@ import (
 	"chatserver/internal/auth"
 	"chatserver/internal/chat"
 	"chatserver/internal/hub"
+	"chatserver/internal/moderation"
 	"chatserver/internal/ratelimit"
 	"chatserver/internal/store"
 )
@@ -67,11 +67,13 @@ var (
 // Service is the chat server's logic. Build it with New, then turn on the
 // optional parts with WithHub and WithModeration.
 type Service struct {
-	store   store.Store
-	hub     *hub.Hub             // nil = no live delivery: Watch returns ErrLiveOff
-	publish func(m chat.Message) // nil = don't publish (e.g. in some tests)
-	banned  func(string) bool    // nil = no moderation
-	posts   *ratelimit.Limiter   // messages per user, however they're sent; nil = no limit
+	store     store.Store
+	hub       *hub.Hub             // nil = no live delivery: Watch returns ErrLiveOff
+	publish   func(m chat.Message) // nil = don't publish (e.g. in some tests)
+	banned    func(string) bool    // nil = no moderation
+	posts     *ratelimit.Limiter   // messages per user, however they're sent; nil = no limit
+	words     *moderation.List     // the banned-word list admins manage; nil = none
+	wordsPath string               // where changes are saved ("" = don't save)
 
 	sessions  *auth.Sessions
 	cost      int       // bcrypt work factor
@@ -109,6 +111,16 @@ func (s *Service) WithHub(h *hub.Hub, publish func(chat.Message)) *Service {
 // list's IsBanned method.
 func (s *Service) WithModeration(banned func(string) bool) *Service {
 	s.banned = banned
+	return s
+}
+
+// WithBannedWords makes list the banned-word list: History hides its words,
+// and admins can change it with BanWord and UnbanWord, which save it to path
+// ("" = don't save).
+func (s *Service) WithBannedWords(list *moderation.List, path string) *Service {
+	s.words = list
+	s.wordsPath = path
+	s.banned = list.IsBanned
 	return s
 }
 
@@ -406,12 +418,12 @@ func (s *Service) hideBanned(ms []chat.Message) []chat.Message {
 // ---- Live feed ----
 
 // Watch connects user (who must be a member) to the room's live feed. Read
-// new messages from client.Out() until it closes, and call leave when done:
+// new messages from feed until it closes, and call leave when done:
 //
-//	client, leave, err := svc.Watch(ctx, user, room)
+//	feed, leave, err := svc.Watch(ctx, user, room)
 //	if err != nil { ... }
 //	defer leave()
-func (s *Service) Watch(ctx context.Context, user chat.UserID, roomID chat.RoomID) (client *hub.Client, leave func(), err error) {
+func (s *Service) Watch(ctx context.Context, user chat.UserID, roomID chat.RoomID) (feed <-chan chat.Message, leave func(), err error) {
 	if s.hub == nil {
 		return nil, nil, ErrLiveOff
 	}
@@ -419,8 +431,8 @@ func (s *Service) Watch(ctx context.Context, user chat.UserID, roomID chat.RoomI
 	if err != nil {
 		return nil, nil, err
 	}
-	client = s.hub.Join(user, room.ID)
-	return client, func() { s.hub.Leave(client) }, nil
+	client := s.hub.Join(user, room.ID)
+	return client.Out(), func() { s.hub.Leave(client) }, nil
 }
 
 // LiveDone is closed when live delivery stops because the server is shutting
@@ -435,7 +447,7 @@ func (s *Service) LiveDone() <-chan struct{} {
 // JoinAndWatch is Watch for a user who may not have joined yet: it joins
 // them first if needed. The gRPC Converse call uses it, since its first
 // message is "join this room".
-func (s *Service) JoinAndWatch(ctx context.Context, user chat.UserID, roomID chat.RoomID) (*hub.Client, func(), error) {
+func (s *Service) JoinAndWatch(ctx context.Context, user chat.UserID, roomID chat.RoomID) (<-chan chat.Message, func(), error) {
 	if s.hub == nil {
 		return nil, nil, ErrLiveOff
 	}
@@ -536,15 +548,84 @@ func chatName(display string) string {
 	return name
 }
 
-// withSuffix adds "-" and 4 random hex digits to base, shortening base if
+// withSuffix adds "-" and 4 random digits to base, shortening base if
 // needed so the result is still a valid length.
 func withSuffix(base string) string {
+	// Digits only: digits belong to no script, so the suffix keeps a
+	// Cyrillic or Greek name single-script (hex letters a-f are Latin).
 	b := make([]byte, 2)
 	rand.Read(b) // never fails (crypto/rand panics instead)
-	suffix := "-" + hex.EncodeToString(b)
+	suffix := fmt.Sprintf("-%04d", (int(b[0])<<8|int(b[1]))%10000)
 	runes := []rune(base)
 	if keep := chat.MaxNameLen - len(suffix); len(runes) > keep {
 		runes = runes[:keep]
 	}
 	return string(runes) + suffix
+}
+
+// ---- Banned words (admin) ----
+
+// ErrNoWordList means the server was started without a banned-word list.
+var ErrNoWordList = errors.New("there is no banned-word list to manage")
+
+// maxWordLen is the longest banned word accepted.
+const maxWordLen = 50
+
+// HasWordList reports whether there's a banned-word list to manage.
+func (s *Service) HasWordList() bool { return s.words != nil }
+
+// BannedWords returns the list, sorted.
+func (s *Service) BannedWords() ([]string, error) {
+	if s.words == nil {
+		return nil, ErrNoWordList
+	}
+	return s.words.Words(), nil
+}
+
+// BanWord adds word to the list and saves it, returning the word as stored
+// (folded: "Sc4m" is stored as "scam").
+func (s *Service) BanWord(word string) (string, error) {
+	if s.words == nil {
+		return "", ErrNoWordList
+	}
+	word = strings.ToLower(strings.TrimSpace(word))
+	if err := validWord(word); err != nil {
+		return "", err
+	}
+	stored := s.words.Add(word)
+	if stored == "" {
+		return "", invalid("word", "can never match a message: use a single word of letters and digits")
+	}
+	return stored, s.saveWords()
+}
+
+// UnbanWord removes word (in any spelling) from the list and saves it.
+func (s *Service) UnbanWord(word string) error {
+	if s.words == nil {
+		return ErrNoWordList
+	}
+	s.words.Remove(strings.ToLower(strings.TrimSpace(word)))
+	return s.saveWords()
+}
+
+// saveWords writes the list back to its file, so changes survive a restart.
+func (s *Service) saveWords() error {
+	if s.wordsPath == "" {
+		return nil
+	}
+	return s.words.Save(s.wordsPath)
+}
+
+// validWord checks that w could ever match. IsBanned splits messages into runs
+// of letters and digits, so a "word" with a space or symbol in it never would.
+func validWord(w string) error {
+	if w == "" || len([]rune(w)) > maxWordLen {
+		return invalid("word", "must be 1-50 characters")
+	}
+	for _, r := range w {
+		if !unicode.IsLetter(r) && !unicode.IsDigit(r) {
+			return invalid("word", "must be a single word of letters and digits")
+		}
+	}
+	return nil
 }

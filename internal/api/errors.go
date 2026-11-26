@@ -37,6 +37,8 @@ func statusFor(err error) int {
 		return http.StatusForbidden
 	case errors.Is(err, service.ErrUnauthenticated), errors.Is(err, service.ErrBadCredentials):
 		return http.StatusUnauthorized
+	case errors.Is(err, service.ErrNoWordList):
+		return http.StatusNotFound
 	case errors.Is(err, service.ErrLiveOff):
 		return http.StatusServiceUnavailable
 	case errors.Is(err, ratelimit.ErrLimited):

@@ -26,7 +26,7 @@ func (s *Server) Watch(req *pb.WatchRequest, stream grpc.ServerStreamingServer[p
 	}
 	for {
 		select {
-		case m, ok := <-client.Out():
+		case m, ok := <-client:
 			if !ok {
 				return status.Error(codes.Unavailable, "stream closed by the server: too slow, or shutting down")
 			}

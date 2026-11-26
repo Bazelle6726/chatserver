@@ -14,7 +14,6 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"chatserver/internal/chat"
-	"chatserver/internal/hub"
 	"chatserver/internal/ratelimit"
 )
 
@@ -363,11 +362,11 @@ func (wc *wsConn) unwatch(room chat.RoomID) bool {
 
 // forward copies one room's live messages to the client until it's told to
 // stop, the connection ends, or the hub drops this client for being slow.
-func (wc *wsConn) forward(room chat.RoomID, client *hub.Client, stop <-chan struct{}) {
+func (wc *wsConn) forward(room chat.RoomID, client <-chan chat.Message, stop <-chan struct{}) {
 	defer wc.wg.Done()
 	for {
 		select {
-		case m, ok := <-client.Out():
+		case m, ok := <-client:
 			if !ok {
 				// The hub closed our outbox: we fell behind, or it's shutting down.
 				wc.mu.Lock()

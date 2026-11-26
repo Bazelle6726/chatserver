@@ -270,6 +270,9 @@ func (s *MemoryStore) PostMessage(ctx context.Context, roomID chat.RoomID, autho
 		return chat.Message{}, err
 	}
 
+	// Store what was checked: the limit counts the text without the spaces
+	// around it, so keeping them could store any number of characters.
+	text = strings.TrimSpace(text)
 	if err := chat.ValidateMessage(text); err != nil {
 		return chat.Message{}, err
 	}

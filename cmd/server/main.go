@@ -132,7 +132,7 @@ func run(cfg config.Config, logger *slog.Logger) error {
 	}
 	posts := ratelimit.New(cfg.PostsPerSecond, int(2*cfg.PostsPerSecond)) // messages per user, over HTTP and gRPC alike
 
-	svc := service.New(s).WithHub(h, pool.Submit).WithModeration(words.IsBanned).WithPostLimit(posts)
+	svc := service.New(s).WithHub(h, pool.Submit).WithBannedWords(words, cfg.BannedWordsPath).WithPostLimit(posts)
 
 	// The browser app: the embedded web/dist, with "dist/" stripped so
 	// index.html is at the root.
@@ -143,7 +143,7 @@ func run(cfg config.Config, logger *slog.Logger) error {
 
 	// HTTP. Listen first, so a port that's taken is reported straight away.
 	gin.SetMode(gin.ReleaseMode) // no debug banner; requests are logged by api.RequestLog
-	a := api.New(svc, limits).WithModeration(words, cfg.BannedWordsPath, cfg.AdminToken).WithGame(cfg.GameKey).WithWeb(app)
+	a := api.New(svc, limits).WithAdmin(cfg.AdminToken).WithGame(cfg.GameKey).WithWeb(app)
 	httpListeners, err := listen(cfg.HTTPAddr)
 	if err != nil {
 		return err

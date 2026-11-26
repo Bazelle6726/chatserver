@@ -13,7 +13,6 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"chatserver/internal/chat"
-	"chatserver/internal/moderation"
 	"chatserver/internal/ratelimit"
 	"chatserver/internal/service"
 )
@@ -24,11 +23,8 @@ type API struct {
 	svc    *service.Service
 	limits ratelimit.Limits
 
-	// The banned-word list and its admin API. Optional (nil = no /admin
-	// routes). Hiding banned words from readers is the service's job; this
-	// is only for changing the list.
-	words      *moderation.List
-	wordsPath  string // where changes are saved ("" = don't save)
+	// The admin API changes the service's banned-word list. It exists only
+	// if the service has one.
 	adminToken string // the X-Admin-Token admins must send ("" = admin API off)
 	gameKey    string // the X-Game-Key the game's backend must send ("" = game API off)
 
@@ -42,13 +38,10 @@ func New(svc *service.Service, limits ratelimit.Limits) *API {
 	return &API{svc: svc, limits: limits}
 }
 
-// WithModeration turns on the admin API for the banned-word list. Changes are
-// saved to path (unless it's ""), and every admin request must carry an
-// X-Admin-Token header equal to token. An empty token turns the admin API
-// off: its routes answer 404.
-func (a *API) WithModeration(words *moderation.List, path, token string) *API {
-	a.words = words
-	a.wordsPath = path
+// WithAdmin turns on the admin API for the service's banned-word list: every
+// admin request must carry an X-Admin-Token header equal to token. An empty
+// token turns it off: its routes answer 404.
+func (a *API) WithAdmin(token string) *API {
 	a.adminToken = token
 	return a
 }

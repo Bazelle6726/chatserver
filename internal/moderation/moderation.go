@@ -161,7 +161,9 @@ func isSingle(w string) bool {
 // bans "scam" and every disguise of it.
 func (l *List) Add(word string) string {
 	word = fold(strings.TrimSpace(word), true)
-	if word == "" {
+	// Only a single word can ever match: IsBanned compares whole words. A
+	// phrase ("free money", say from the file) would be listed but never hit.
+	if ts := tokens(word); len(ts) != 1 || ts[0] != word {
 		return ""
 	}
 	l.mu.Lock()

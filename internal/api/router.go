@@ -49,7 +49,7 @@ func (a *API) Router() *gin.Engine {
 		a.serveWeb(r)
 	}
 
-	if a.words != nil {
+	if a.svc.HasWordList() {
 		failures := ratelimit.New(ratelimit.Per(adminMaxFailures, adminFailureWindow), adminMaxFailures)
 		admin := r.Group("/admin", AdminOnly(a.adminToken, failures))
 		admin.GET("/banned-words", a.listBannedWords)

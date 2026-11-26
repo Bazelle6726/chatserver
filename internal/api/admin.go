@@ -3,9 +3,7 @@ package api
 import (
 	"crypto/subtle"
 	"net/http"
-	"strings"
 	"time"
-	"unicode"
 
 	"github.com/gin-gonic/gin"
 
@@ -13,9 +11,6 @@ import (
 )
 
 const adminTokenHeader = "X-Admin-Token"
-
-// maxWordLen is the longest banned word the admin API accepts.
-const maxWordLen = 50
 
 // Wrong admin tokens allowed per IP address: a burst of adminMaxFailures,
 // then one more per adminFailureWindow/adminMaxFailures (12s). Without a
@@ -56,25 +51,16 @@ func RequireKey(what, header, key string, failures *ratelimit.Limiter) gin.Handl
 
 // GET /admin/banned-words
 func (a *API) listBannedWords(c *gin.Context) {
-	c.JSON(http.StatusOK, gin.H{"words": a.words.Words()})
+	words, err := a.svc.BannedWords()
+	if err != nil {
+		writeError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"words": words})
 }
 
 type bannedWordReq struct {
 	Word string `json:"word" binding:"required"`
-}
-
-// validWord checks that w could ever match. IsBanned splits messages into runs
-// of letters and digits, so a "word" with a space or symbol in it never would.
-func validWord(w string) error {
-	if w == "" || len([]rune(w)) > maxWordLen {
-		return invalid("word", "must be 1-50 characters")
-	}
-	for _, r := range w {
-		if !unicode.IsLetter(r) && !unicode.IsDigit(r) {
-			return invalid("word", "must be a single word of letters and digits")
-		}
-	}
-	return nil
 }
 
 // POST /admin/banned-words  {"word": "fraud"}
@@ -84,13 +70,8 @@ func (a *API) addBannedWord(c *gin.Context) {
 		writeError(c, bodyError(err))
 		return
 	}
-	word := strings.ToLower(strings.TrimSpace(req.Word))
-	if err := validWord(word); err != nil {
-		writeError(c, err)
-		return
-	}
-	stored := a.words.Add(word) // folded: "Sc4m" is stored as "scam"
-	if err := a.saveWords(); err != nil {
+	stored, err := a.svc.BanWord(req.Word) // folded: "Sc4m" is stored as "scam"
+	if err != nil {
 		writeError(c, err)
 		return
 	}
@@ -99,19 +80,9 @@ func (a *API) addBannedWord(c *gin.Context) {
 
 // DELETE /admin/banned-words/:word
 func (a *API) removeBannedWord(c *gin.Context) {
-	word := strings.ToLower(strings.TrimSpace(c.Param("word")))
-	a.words.Remove(word)
-	if err := a.saveWords(); err != nil {
+	if err := a.svc.UnbanWord(c.Param("word")); err != nil {
 		writeError(c, err)
 		return
 	}
 	c.Status(http.StatusNoContent)
-}
-
-// saveWords writes the list back to its file, so changes survive a restart.
-func (a *API) saveWords() error {
-	if a.wordsPath == "" {
-		return nil
-	}
-	return a.words.Save(a.wordsPath)
 }

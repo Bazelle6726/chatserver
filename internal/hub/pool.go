@@ -15,7 +15,7 @@ import (
 //	                       └──► worker 3 ─┘
 type Pool struct {
 	jobs    chan chat.Message
-	banned  func(text string) bool // e.g. an Admin's IsBanned method
+	banned  func(text string) bool // e.g. a moderation.List's IsBanned method
 	deliver func(m chat.Message)   // e.g. hub.Publish
 	wg      sync.WaitGroup
 }

@@ -64,7 +64,7 @@ func (s *Server) Converse(stream grpc.BidiStreamingServer[pb.ConverseRequest, pb
 
 	for {
 		select {
-		case m, ok := <-client.Out():
+		case m, ok := <-client:
 			if !ok {
 				return status.Error(codes.Unavailable, "stream closed by the server: too slow, or shutting down")
 			}

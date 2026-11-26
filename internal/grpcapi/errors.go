@@ -47,8 +47,3 @@ func toStatus(err error) error {
 		return status.Error(codes.Internal, "internal error")
 	}
 }
-
-// invalid builds a validation error for a request field.
-func invalid(field, reason string) error {
-	return &chat.ValidationError{Field: field, Reason: reason}
-}

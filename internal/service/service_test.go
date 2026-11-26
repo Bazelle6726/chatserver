@@ -146,7 +146,7 @@ func TestWatch(t *testing.T) {
 		t.Fatal(err)
 	}
 	select {
-	case m := <-client.Out():
+	case m := <-client:
 		if m.Text != "hi eve" {
 			t.Errorf("eve got %q, want %q", m.Text, "hi eve")
 		}

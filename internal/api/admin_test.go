@@ -31,7 +31,7 @@ func newAdminServer(t *testing.T, token string) *adminServer {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "banned_words.txt")
 	words := moderation.New("scam", "spam")
-	a := New(newSvc(), ratelimit.Limits{}).WithModeration(words, path, token)
+	a := New(newSvc().WithBannedWords(words, path), ratelimit.Limits{}).WithAdmin(token)
 	return &adminServer{t: t, router: a.Router(), words: words, path: path}
 }
 
@@ -136,7 +136,7 @@ func TestRemoveBannedWord(t *testing.T) {
 
 // The routes exist only when moderation is configured.
 func TestNoAdminRoutesWithoutModeration(t *testing.T) {
-	s := newServer(t) // plain API, no WithModeration
+	s := newServer(t) // plain API, no banned-word list
 	expectStatus(t, s.do("GET", "/admin/banned-words", nil, ""), http.StatusNotFound, "admin route on an API without moderation")
 }
 

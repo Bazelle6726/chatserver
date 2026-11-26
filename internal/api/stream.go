@@ -40,7 +40,7 @@ func (a *API) stream(c *gin.Context) {
 
 	for {
 		select {
-		case m, ok := <-client.Out():
+		case m, ok := <-client:
 			if !ok {
 				return // the hub closed us: dropped as too slow, or shutting down
 			}

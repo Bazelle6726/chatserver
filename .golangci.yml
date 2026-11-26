@@ -1,0 +1,97 @@
+# golangci-lint v2 config.
+#
+# Each rule here replaces a sentence that used to live only in a comment or
+# a README. A comment can be ignored; a failing lint can't. When you correct
+# the same mistake twice (yours or an agent's), add a rule here instead of
+# another comment.
+#
+# Run:  golangci-lint run ./...
+version: "2"
+
+linters:
+  default: none
+  enable:
+    - depguard
+    - forbidigo
+    - govet
+    - ineffassign
+    - unused
+
+  settings:
+    depguard:
+      rules:
+        # Was: the package comment in internal/service/service.go
+        #   "The front doors only translate: a request into a call here,
+        #    and the result or error into a response."
+        front-doors-only-translate:
+          files:
+            - "**/internal/api/*.go"
+            - "**/internal/grpcapi/*.go"
+            - "!$test"
+          deny:
+            - pkg: chatserver/internal/store
+              desc: >-
+                front doors don't touch storage. Add or extend a method on
+                service.Service and call that, so HTTP and gRPC share the rule.
+            - pkg: chatserver/internal/auth
+              desc: >-
+                logins and sessions are rules: they live in service. Call
+                service.Login / service.Authenticate instead.
+            - pkg: chatserver/internal/textnorm
+              desc: >-
+                text folding is part of moderation and name rules, which live
+                in service. Don't re-implement a rule in one front door.
+            - pkg: chatserver/internal/hub
+              desc: >-
+                live delivery is owned by service. Return what the front door
+                needs from service.Watch (e.g. a receive-only channel) instead
+                of exposing hub types.
+            - pkg: chatserver/internal/moderation
+              desc: >-
+                moderation is listed as a service rule. Put banned-word admin
+                behind service so gRPC and HTTP get the same behaviour.
+
+        # The domain and engine packages must not know which transport is in
+        # front of them, or a rule ends up working over HTTP but not gRPC.
+        core-stays-transport-free:
+          files:
+            - "**/internal/chat/*.go"
+            - "**/internal/store/*.go"
+            - "**/internal/hub/*.go"
+            - "**/internal/service/*.go"
+            - "**/internal/moderation/*.go"
+            - "**/internal/textnorm/*.go"
+            - "**/internal/ratelimit/*.go"
+            - "**/internal/auth/*.go"
+          deny:
+            - pkg: github.com/gin-gonic/gin
+              desc: HTTP belongs in internal/api. Return a domain error; api maps it to a status.
+            - pkg: google.golang.org/grpc
+              desc: gRPC belongs in internal/grpcapi. Return a domain error; grpcapi maps it to a code.
+            - pkg: chatserver/internal/pb
+              desc: protobuf types stay at the edge. Convert with internal/pbconv in the front door.
+            - pkg: github.com/coder/websocket
+              desc: WebSockets belong in internal/api.
+
+    forbidigo:
+      forbid:
+        # The Go version of "agents love setTimeout": a sleep that papers
+        # over an ordering bug. The hub is built on channels for a reason.
+        - pattern: ^time\.Sleep$
+          msg: >-
+            don't wait for something to happen, be told it happened: use a
+            channel, ctx.Done() or a sync primitive. In tests, wait on a
+            channel with a timeout.
+        - pattern: ^(fmt\.Print(f|ln)?|log\.(Print|Fatal|Panic)(f|ln)?)$
+          msg: use log/slog (structured, levelled) so every line reaches the log collector.
+
+  exclusions:
+    rules:
+      # Tests may sleep to simulate slow clients.
+      - path: _test\.go
+        linters: [forbidigo]
+      # Command-line tools print to the terminal on purpose.
+      - path: ^cmd/
+        linters: [forbidigo]
+    paths:
+      - internal/pb/.*\.pb\.go

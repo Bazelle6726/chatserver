@@ -44,13 +44,35 @@ var confusables = map[rune]rune{
 // Two strings with the same skeleton are, for practical purposes,
 // indistinguishable on screen.
 func Skeleton(s string) string {
+	// Drop invisible characters BEFORE normalizing: one between a letter and
+	// its accent ("A" + zero-width space + U+0301) would otherwise stop NFKC
+	// joining them into one letter, and the result would differ from "Á".
+	s = strings.Map(func(r rune) rune {
+		if unicode.Is(unicode.Cf, r) {
+			return -1
+		}
+		return r
+	}, s)
+	// Normalize and map until nothing changes. Mapping can make a new pair
+	// that normalizing joins: Cyrillic "У" + a dot below becomes Latin "y" +
+	// the dot, which NFKC turns into "ỵ". Stopping after one pass would give
+	// "У̣" and "ỵ" different skeletons. A few passes always settle.
+	for range 4 {
+		next := foldOnce(s)
+		if next == s {
+			break
+		}
+		s = next
+	}
+	return s
+}
+
+// foldOnce is one pass of Skeleton: NFKC, lowercase, look-alikes to Latin.
+func foldOnce(s string) string {
 	s = norm.NFKC.String(s)
 	var b strings.Builder
 	b.Grow(len(s))
 	for _, r := range s {
-		if unicode.Is(unicode.Cf, r) {
-			continue
-		}
 		r = unicode.ToLower(r)
 		if latin, ok := confusables[r]; ok {
 			r = latin
